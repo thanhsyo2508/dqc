@@ -1,0 +1,72 @@
+# Digital QC — core pipeline
+
+## UI hiện tại
+
+Màn hình tạo hồ sơ vẫn giữ nguyên nguyên tắc một sản phẩm → một PDF → một QR/link, đồng thời hỗ trợ thao tác nhanh cho dữ liệu thực tế:
+
+- Dán nhiều dòng từ Excel theo 9 cột: Mã dự án, PO, NCC, Mã hàng, Tên hàng, Số lượng, ĐVT, Phiếu nhập, Ngày nhập.
+- Chọn từng sản phẩm trong danh sách để chỉnh sửa và tạo hồ sơ độc lập.
+- Thêm nhiều dòng kết quả đo cho nhiều mẫu trong cùng một hồ sơ.
+- Kéo-thả hoặc chọn nhiều bản vẽ PDF; các PDF được ghép nối sau phiếu QC.
+- Mỗi card mã hàng quản lý riêng thông tin kiểm tra, bản vẽ, preview và trạng thái tài liệu; không gộp với mã hàng khác.
+- File upload thành công được ghi metadata vào thư viện tài liệu nội bộ theo card; QC có thể mở lại hồ sơ và link Drive riêng.
+- QC WORKSPACE/header được giữ khi cuộn, 5 người kiểm tra gần nhất được gợi ý, và các dòng kết quả đo có khoảng cách nhẹ để dễ scan.
+- Dữ liệu nháp và preview chỉ tồn tại trong phiên làm việc; local storage chỉ tự động giữ metadata của hồ sơ sau khi upload thành công.
+- Nút `Gửi hồ sơ` upload đúng PDF preview theo từng card; URL Web App `/exec` được nhập trong cấu hình server trên topbar.
+- Khi server trả thành công, metadata được tự động đưa vào `DOCUMENT LIBRARY`; event upload có correlation theo `documentId`/`requestId` để không nhầm mã hàng.
+- QR được lưu cùng hồ sơ upload dưới dạng payload `open_url`, số lần in, thời điểm in, mẫu tem và profile máy in; có thể mở lại từ Document Library.
+- Form `In tem QR` hỗ trợ mẫu A4, Zebra/Godex 100×50 mm, Brother 62×29 mm và máy in văn phòng generic; hộp thoại in Windows vẫn là nơi chọn thiết bị thực tế.
+- Validation hiển thị ngay cạnh trường lỗi; bảng đo responsive và có nhãn cột rõ trên mobile.
+- Giao diện mở rộng theo màn hình, ưu tiên hiển thị form và preview trong cùng một workspace.
+
+Đây là bước triển khai đầu tiên theo mô hình product-centric. Hiện tại project tập trung kiểm chứng pipeline trước khi dựng UI Tauri:
+
+```text
+ProductQC → tạo phiếu PDF → ghép bản vẽ → upload nguyên bytes PDF
+```
+
+Mỗi sản phẩm có một hồ sơ QC độc lập, một PDF, một `request_id` và một QR/link.
+
+## Chạy kiểm thử
+
+```powershell
+npm install
+npm run build
+npm test
+```
+
+Test hiện có:
+
+- tạo PDF QC hợp lệ;
+- ghép phiếu QC trước các trang bản vẽ;
+- gửi đúng bytes PDF đã ghép tới mock HTTP server;
+- lưu/phục hồi payload QR và lịch sử in;
+- dựng HTML print sheet nhiều bản theo mẫu tem;
+- kiểm tra metadata sản phẩm, số trang và SHA-256.
+
+UI hiện có form product-centric, dán nhiều sản phẩm từ Excel, nhiều dòng đo, nhiều PDF bản vẽ, tạo PDF phiếu QC, ghép bản vẽ, preview, tải PDF và upload trực tiếp qua endpoint Web App đã cấu hình. Chưa hoàn thiện OAuth, upload qua Rust outbox và xác nhận production với Drive/Sheet thật.
+
+Đã bổ sung khung Apps Script tại `apps-script/` và outbox Rust tại `src-tauri/src/outbox.rs`. Apps Script hiện là bộ khung deploy thử nghiệm; cần cấu hình Script Properties và tài khoản Google trước khi dùng thật.
+
+Giao diện hiện dùng design system tại `design-system/digital-qc/MASTER.md`: phong cách Minimalism/Swiss, màu navy–blue–green, trạng thái tác nghiệp rõ và responsive cho màn hình nhỏ.
+
+Chạy UI web local:
+
+```powershell
+npm run dev
+```
+
+Khung Tauri:
+
+```powershell
+npm run tauri dev
+```
+
+Lưu ý: cần chọn ít nhất một file PDF bản vẽ trong UI để tạo preview hoàn chỉnh. Font Unicode tiếng Việt và kiểm tra trực quan vẫn cần hoàn tất trước khi phát hành.
+
+## Tài liệu dự án
+
+- `KIEN_TRUC_CHI_TIET_DIGITAL_QC.md` — kiến trúc và lộ trình.
+- `CHANGELOG.md` — lịch sử thay đổi.
+- `EXPERIENCE.md` — bài học, quyết định và các lỗi cần tránh.
+- `design-system/digital-qc/MASTER.md` — quy chuẩn màu, typography, spacing và component UI.
