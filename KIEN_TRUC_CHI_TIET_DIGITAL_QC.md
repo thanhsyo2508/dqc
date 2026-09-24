@@ -289,13 +289,6 @@ Nếu `request_id` đã tồn tại: trả lại kết quả cũ với `duplicat
 
 Chỉ `upload_finish` (hoặc `upload_qc_pdf`) mới trả `success: true` cho việc lưu. Phải có cơ chế dọn phiên tạm quá hạn.
 
-#### `find_uploads` (tùy chọn)
-```json
-// data: { "project": "…", "po": "…", "part_no": "…" }  (lọc hồ sơ từng sản phẩm)
-{ "success": true, "items": [ { "uploaded_at": "…", "file_name": "…", "open_url": "…", "download_url": "…" } ] }
-```
-Dùng để mở lại PDF và in lại tem. Giới hạn số dòng trả về.
-
 ---
 
 ## 8. Apps Script chi tiết
@@ -366,7 +359,6 @@ Kết quả thử nghiệm quyết định chốt phương án; cấu trúc `Aut
 | `api_ping` | Gọi `ping` |
 | `upload_pdf` | Nhận bytes + metadata một sản phẩm, ghi outbox, gọi server, trả kết quả |
 | `outbox_list` / `outbox_retry` / `outbox_discard` | Quản lý hàng đợi |
-| `find_uploads` | Gọi `find_uploads` |
 | `open_url` | Mở link bằng trình duyệt |
 | `print_label` | Gửi tem ra máy in |
 | `config_get` / `config_set` | Cấu hình theo máy |
@@ -383,14 +375,14 @@ Thư mục dữ liệu app:
 ```
 outbox/
   <request_id>/
-    meta.json     # product_key, metadata, page_count, sha256, size, trạng thái, số lần thử, thời điểm
+    meta.json     # endpoint, product_key, QC metadata, page_count, sha256, size, trạng thái, số lần thử
     file.pdf      # PDF đã preview
 ```
-Trạng thái: `pending` → `sending` → (`done` | `failed_retryable` | `failed_permanent`).
+Trạng thái thực tế: `pending` → `sending` → (`pending` khi lỗi retry được | `failed` khi lỗi dữ liệu/quyền).
 - Ghi file **trước** khi gửi; ghi `meta.json` bằng cách ghi tạm rồi đổi tên để tránh hỏng khi mất điện.
 - Chỉ xóa mục khi nhận `success: true`.
-- Khi mở app, quét outbox và hiện các mục chưa xong; người dùng chọn gửi lại hoặc bỏ.
-- Mục `done` giữ `open_url`, `file_id` và metadata sản phẩm để in lại đúng tem nếu app tắt giữa chừng.
+- Khi mở app hoặc có mạng trở lại, app quét outbox và thử lại các mục `pending`/`sending`.
+- Khi nhận `success: true`, kết quả được trả về UI để cập nhật card; item không còn trong outbox vì metadata thành công đã nằm trong Document Library.
 
 ### 10.4 `auth`
 - PKCE, máy chủ loopback tạm trên cổng ngẫu nhiên, đóng ngay sau khi nhận `code`.
@@ -520,7 +512,7 @@ Khóa hàng tiêu đề, tạo bộ lọc theo `project`, `po`, `part_no`, `prod
 | 5 | Giới hạn dung lượng bản vẽ | Đo ở Giai đoạn 0, đặt `MAX_BYTES` theo kết quả |
 | 6 | Cách quét QR ở xưởng | Mặc định QR một URL mở hồ sơ PDF; chốt bằng máy quét/điện thoại thực tế |
 | 7 | Máy in tem và khổ tem | Chốt cùng mục 1 |
-| 8 | Có cần `find_uploads` / in lại tem ngay bản đầu | Nên có; chi phí thấp, giải quyết vấn đề mở link |
+| 8 | Phạm vi xóa tài liệu | Xóa metadata khỏi Document Library local; chưa xóa file Drive vì cần quyền và quy trình riêng |
 | 9 | Khóa một hồ sơ sản phẩm | Đề xuất `project + po + part_no + lot_no + slip_no`; nếu tái kiểm thì thêm `inspection_no` |
 | 10 | Nhiều sản phẩm trong một lần nhập | Cho nhập/dán nhiều dòng nhưng tạo hồ sơ, upload và QR tuần tự từng sản phẩm |
 
@@ -601,9 +593,9 @@ Khóa hàng tiêu đề, tạo bộ lọc theo `project`, `po`, `part_no`, `prod
 
 ## 21. Trạng thái triển khai backend
 
-- `apps-script/` đã có bộ khung API thử nghiệm cho `ping`, `upload_qc_pdf` và `find_uploads`; cấu hình bằng Script Properties, không lưu secret trong source.
-- `src-tauri/src/outbox.rs` đã có hàng đợi bền vững theo `request_id`, lưu riêng `meta.json` và `file.pdf`, hỗ trợ list/enqueue/discard.
-- Chưa bật upload production, OAuth thật hoặc retry HTTP Rust cho đến khi có Drive folder, spreadsheet thử nghiệm, OAuth client ID và URL Web App `/exec`.
+- `apps-script/` đã có API test cho `ping` và `upload_qc_pdf`; cấu hình bằng Script Properties, không lưu secret trong source.
+- `src-tauri/src/outbox.rs` đã có hàng đợi bền vững theo `request_id`, lưu riêng `meta.json` và `file.pdf`, upload HTTP bằng Rust, retry sau restart/mất mạng và xóa item sau response thành công.
+- Web App test thật đã xác nhận ping, upload, duplicate, sai SHA-256, PDF hỏng, concurrency và file gần 20 MiB. OAuth production vẫn chờ OAuth Client ID, PKCE loopback và kho token hệ điều hành.
 
 ## 22. Thư viện file upload và UX workspace
 
@@ -636,15 +628,15 @@ Khóa hàng tiêu đề, tạo bộ lọc theo `project`, `po`, `part_no`, `prod
 - Print sheet dùng payload đã lưu để dựng QR lại, hỗ trợ số lượng 1–100 bản và ghi lại `printCount/printedAt` sau khi mở hộp thoại in.
 - Giai đoạn hiện tại dùng system print dialog để tương thích nhiều dòng máy in. In trực tiếp qua driver/Tauri native là hạng mục riêng, cần kiểm thử từng model và driver thực tế.
 
-### Kiểm tra kết nối và tra cứu thư viện
+### Kiểm tra kết nối và thư viện local
 
 - `pingServer` gửi action `ping` cùng `api_version` tới Web App; UI phân biệt `configured`, `checking`, `online` và `error`, không coi việc đã lưu URL là server đang hoạt động.
 - Document Library lọc client-side theo `partNo`, `po`, `qcNo` và `documentId`; ô tìm kiếm vẫn nằm trong vùng `<details>` để không làm danh sách dài chiếm màn hình khi chưa mở.
-- `find_uploads` nhận `query`, `from_date`, `to_date` và trả metadata hồ sơ từ `UPLOAD_LOG`; UI upsert theo `qc_no`/`file_id`/`open_url`, sau đó lưu cache local để mở lại QR/link nhanh.
+- Nút xóa chỉ loại hồ sơ khỏi metadata local trên máy hiện tại, có xác nhận trước khi xóa; link/file trên Google Drive vẫn được giữ nguyên.
 
 ## 24. Điều kiện để hoàn tất các mốc production
 
 - Cần URL Web App `/exec`, `DRIVE_FOLDER_ID`, `LOG_SPREADSHEET_ID` và một bộ PDF thử nghiệm để chạy kiểm thử server thật.
-- Cần OAuth Client ID, redirect loopback và danh sách tài khoản QC trước khi bật `ENFORCE_AUTH=true`.
+- Cần OAuth Client ID, redirect loopback, kho token hệ điều hành và danh sách tài khoản QC trước khi bật `ENFORCE_AUTH=true`.
 - Cần ít nhất một model thực tế của Zebra, Brother hoặc Godex, khổ tem, driver và mẫu tem để hiệu chỉnh offset/in nhiệt.
-- Tauri outbox mới chỉ có enqueue/list/discard; trước khi gọi là hoàn tất phải nối worker đọc `file.pdf` + `meta.json`, retry cùng `request_id` và xóa item sau response thành công.
+- Tauri outbox đã có worker retry cơ bản; cần bổ sung OAuth token refresh an toàn trước khi chạy với `ENFORCE_AUTH=true`.

@@ -1,0 +1,8 @@
+# Only deploy Apps Script source and manifest files.
+README.md
+SETUP.md
+test-webapp.ps1
+*.test.*
+node_modules/**
+.git/**
+.codegraph/**

@@ -4,6 +4,30 @@ Các thay đổi đáng chú ý của dự án Digital QC.
 
 ## [Unreleased]
 
+### Reliability and verification
+
+- Hoàn thiện Rust Outbox: lưu `file.pdf`/`meta.json` trước upload, gửi HTTP từ Rust, giữ nguyên `request_id`, retry sau restart/mất mạng và xóa item sau response thành công.
+- Bổ sung tự khôi phục card sản phẩm từ metadata Outbox sau khi app mở lại.
+- Nhúng Noto Sans Vietnamese vào PDF QC; bảng nhiều dòng tự phân trang và nội dung dài được giới hạn theo chiều rộng ô.
+- Mở rộng `test-webapp.ps1` cho duplicate, sai SHA-256, PDF hỏng, concurrency và near-limit; đã chạy thành công trên Web App test thật.
+- Chưa bật OAuth production hoặc in trực tiếp; cần OAuth Client ID/kho token và máy Zebra, Brother, Godex để nghiệm thu.
+- Sửa lỗi PDF ô vuông bằng cách nhúng đồng thời font Latin và Vietnamese, chọn font theo glyph.
+- Sau upload thành công, card sản phẩm được đóng/xóa khỏi workspace nhưng hồ sơ vẫn giữ trong Document Library.
+
+### Removed
+
+- Loại bỏ đồng bộ `find_uploads` từ server; Document Library hiện chỉ quản lý metadata upload thành công trên máy hiện tại.
+
+### Apps Script test setup
+
+- Bổ sung hướng dẫn tạo project Apps Script bằng clasp tại `apps-script/SETUP.md`.
+- Thêm `setupTestEnvironment()` để tạo Drive folder, Spreadsheet và Script Properties test.
+- Thêm `test-webapp.ps1` để kiểm tra `ping` và upload PDF nhỏ trước khi nối app.
+- Bỏ đồng bộ Document Library từ server; thư viện chỉ giữ metadata sau khi upload thành công trên máy hiện tại.
+- Thêm nút xóa tài liệu khỏi Document Library local; file đã lưu trên Google Drive không bị xóa.
+- Khóa nút gửi sau khi hồ sơ upload thành công để tránh gửi trùng do nhấn nhầm.
+- Sửa request client sang `text/plain` chứa JSON để trình duyệt không phát sinh CORS preflight với Apps Script Web App.
+
 ### Workflow upload and UX hardening
 
 - Lưu payload QR `open_url` và lịch sử in ngay trong metadata của hồ sơ upload thành công.

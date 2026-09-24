@@ -1,7 +1,10 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +21,27 @@ pub struct OutboxMeta {
     pub created_at: String,
     pub updated_at: String,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default = "default_api_version")]
+    pub api_version: u32,
+    #[serde(default)]
+    pub qc_json: String,
+}
+
+fn default_api_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct OutboxRetryResult {
+    pub request_id: String,
+    pub document_id: String,
+    pub success: bool,
+    pub response: Option<Value>,
+    pub error: Option<String>,
+    pub meta: OutboxMeta,
 }
 
 fn outbox_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -55,10 +79,24 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let temp_path = path.with_extension("tmp");
+    let temp_path = path.with_extension(format!("tmp-{}", std::process::id()));
     fs::write(&temp_path, bytes)
         .map_err(|error| format!("Cannot write temporary outbox file: {error}"))?;
+    if path.exists() {
+        let backup_path = path.with_extension("bak");
+        let _ = fs::copy(path, backup_path);
+        fs::remove_file(path).map_err(|error| format!("Cannot replace outbox file: {error}"))?;
+    }
     fs::rename(&temp_path, path).map_err(|error| format!("Cannot commit outbox file: {error}"))
+}
+
+fn read_meta_file(path: &Path) -> Result<OutboxMeta, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => fs::read(path.with_extension("bak"))
+            .map_err(|error| format!("Cannot read outbox metadata: {error}"))?,
+    };
+    serde_json::from_slice(&bytes).map_err(|error| format!("Invalid outbox metadata: {error}"))
 }
 
 pub fn enqueue(
@@ -68,12 +106,23 @@ pub fn enqueue(
     product_key: String,
     page_count: u32,
     pdf_bytes: Vec<u8>,
+    endpoint: String,
+    api_version: u32,
+    qc_json: String,
 ) -> Result<OutboxMeta, String> {
     if document_id.trim().is_empty() || product_key.trim().is_empty() {
         return Err("document_id and product_key are required".to_string());
     }
     if page_count == 0 || pdf_bytes.len() < 5 || &pdf_bytes[..5] != b"%PDF-" {
         return Err("Only a valid PDF preview can be queued".to_string());
+    }
+    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+        return Err("A valid upload endpoint is required".to_string());
+    }
+    let qc: Value =
+        serde_json::from_str(&qc_json).map_err(|_| "Invalid QC metadata".to_string())?;
+    if !qc.get("product").is_some() {
+        return Err("QC metadata must include product".to_string());
     }
 
     let directory = item_dir(app, &request_id)?;
@@ -102,12 +151,189 @@ pub fn enqueue(
         created_at: now.clone(),
         updated_at: now,
         last_error: None,
+        endpoint,
+        api_version,
+        qc_json,
     };
     let serialized = serde_json::to_vec_pretty(&meta)
         .map_err(|error| format!("Cannot serialize metadata: {error}"))?;
     write_atomic(&pdf_path, &pdf_bytes)?;
     write_atomic(&meta_path, &serialized)?;
     Ok(meta)
+}
+
+fn read_meta(app: &AppHandle, request_id: &str) -> Result<OutboxMeta, String> {
+    let path = item_dir(app, request_id)?.join("meta.json");
+    read_meta_file(&path)
+}
+
+fn write_meta(app: &AppHandle, meta: &OutboxMeta) -> Result<(), String> {
+    let path = item_dir(app, &meta.request_id)?.join("meta.json");
+    let bytes = serde_json::to_vec_pretty(meta)
+        .map_err(|error| format!("Cannot serialize metadata: {error}"))?;
+    write_atomic(&path, &bytes)
+}
+
+fn set_meta_error(
+    app: &AppHandle,
+    meta: &mut OutboxMeta,
+    status: &str,
+    error: String,
+) -> Result<(), String> {
+    meta.status = status.to_string();
+    meta.last_error = Some(error);
+    meta.updated_at = chrono_like_now();
+    write_meta(app, meta)
+}
+
+fn upload_body(meta: &OutboxMeta, pdf_bytes: &[u8]) -> Result<Value, String> {
+    let qc: Value = serde_json::from_str(&meta.qc_json)
+        .map_err(|_| "Queued QC metadata is invalid".to_string())?;
+    let product = qc
+        .get("product")
+        .ok_or_else(|| "Queued QC metadata has no product".to_string())?;
+    let body = json!({
+        "action": "upload_qc_pdf",
+        "api_version": meta.api_version,
+        "data": {
+            "request_id": meta.request_id,
+            "product_key": meta.product_key,
+            "project": product.get("project").and_then(Value::as_str).unwrap_or_default(),
+            "po": product.get("po").and_then(Value::as_str).unwrap_or_default(),
+            "part_no": product.get("partNo").and_then(Value::as_str).unwrap_or_default(),
+            "lot_no": product.get("lotNo").and_then(Value::as_str).unwrap_or("N/A"),
+            "supplier": product.get("supplier").and_then(Value::as_str).unwrap_or_default(),
+            "quantity": product.get("quantity").and_then(Value::as_f64).unwrap_or_default(),
+            "unit": product.get("unit").and_then(Value::as_str).unwrap_or("PCS"),
+            "slip_no": product.get("slipNo").and_then(Value::as_str).unwrap_or_default(),
+            "received_date": product.get("receivedDate").and_then(Value::as_str).unwrap_or_default(),
+            "page_count": meta.page_count,
+            "size_bytes": meta.size_bytes,
+            "sha256": meta.sha256,
+            "pdf_base64": BASE64.encode(pdf_bytes),
+        }
+    });
+    Ok(body)
+}
+
+pub async fn upload(
+    app: &AppHandle,
+    request_id: String,
+    id_token: Option<String>,
+) -> Result<Value, String> {
+    let mut meta = read_meta(app, &request_id)?;
+    if meta.endpoint.is_empty() || meta.qc_json.is_empty() {
+        let message = "Outbox item was created by an older version and cannot retry automatically"
+            .to_string();
+        set_meta_error(app, &mut meta, "failed", message.clone())?;
+        return Err(message);
+    }
+    let pdf_path = item_dir(app, &request_id)?.join("file.pdf");
+    let pdf_bytes =
+        fs::read(pdf_path).map_err(|error| format!("Cannot read queued PDF: {error}"))?;
+    if sha256_hex(&pdf_bytes) != meta.sha256 {
+        let message = "Queued PDF SHA-256 does not match metadata".to_string();
+        set_meta_error(app, &mut meta, "failed", message.clone())?;
+        return Err(message);
+    }
+
+    meta.status = "sending".to_string();
+    meta.attempt_count += 1;
+    meta.updated_at = chrono_like_now();
+    meta.last_error = None;
+    write_meta(app, &meta)?;
+
+    let mut body = upload_body(&meta, &pdf_bytes)?;
+    if let Some(token) = id_token.filter(|token| !token.trim().is_empty()) {
+        body["auth"] = json!({ "id_token": token });
+    }
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|error| format!("Cannot create HTTP client: {error}"))?;
+    let response = match client
+        .post(&meta.endpoint)
+        .header("content-type", "text/plain;charset=UTF-8")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let message = format!("Network upload failed: {error}");
+            set_meta_error(app, &mut meta, "pending", message.clone())?;
+            return Err(message);
+        }
+    };
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| format!("Cannot read upload response: {error}"))?;
+    let result: Value = serde_json::from_str(&text).map_err(|error| {
+        let message = format!("Server returned invalid JSON ({status}): {error}");
+        let _ = set_meta_error(app, &mut meta, "pending", message.clone());
+        message
+    })?;
+    if result
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        discard(app, request_id)?;
+        return Ok(result);
+    }
+
+    let message = result
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Upload was rejected")
+        .to_string();
+    let retryable = result
+        .get("retryable")
+        .and_then(Value::as_bool)
+        .unwrap_or(!status.is_client_error());
+    set_meta_error(
+        app,
+        &mut meta,
+        if retryable { "pending" } else { "failed" },
+        message,
+    )?;
+    Ok(result)
+}
+
+pub async fn retry_all(app: &AppHandle) -> Result<Vec<OutboxRetryResult>, String> {
+    let items = list(app)?;
+    let mut results = Vec::new();
+    for item in items
+        .into_iter()
+        .filter(|item| item.status == "pending" || item.status == "sending")
+    {
+        let request_id = item.request_id.clone();
+        match upload(app, request_id.clone(), None).await {
+            Ok(response) => results.push(OutboxRetryResult {
+                request_id,
+                document_id: item.document_id.clone(),
+                success: response
+                    .get("success")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                response: Some(response),
+                error: None,
+                meta: item,
+            }),
+            Err(error) => results.push(OutboxRetryResult {
+                request_id,
+                document_id: item.document_id.clone(),
+                success: false,
+                response: None,
+                error: Some(error),
+                meta: item,
+            }),
+        }
+    }
+    Ok(results)
 }
 
 pub fn list(app: &AppHandle) -> Result<Vec<OutboxMeta>, String> {
@@ -119,13 +345,10 @@ pub fn list(app: &AppHandle) -> Result<Vec<OutboxMeta>, String> {
             continue;
         }
         let meta_path = entry.path().join("meta.json");
-        if !meta_path.exists() {
+        if !meta_path.exists() && !meta_path.with_extension("bak").exists() {
             continue;
         }
-        let bytes =
-            fs::read(meta_path).map_err(|error| format!("Cannot read outbox metadata: {error}"))?;
-        let meta: OutboxMeta = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("Invalid outbox metadata: {error}"))?;
+        let meta = read_meta_file(&meta_path)?;
         items.push(meta);
     }
     items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));

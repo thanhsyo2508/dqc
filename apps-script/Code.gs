@@ -11,11 +11,53 @@ function doPost(e) {
 
     if (action === "ping") return json_(ok_({ user: caller || "anonymous", allowed: true }));
     if (action === "upload_qc_pdf") return json_(ok_(uploadQcPdf_(data, caller)));
-    if (action === "find_uploads") return json_(ok_({ items: findUploads_(data) }));
     fail_("INVALID_INPUT", "Unknown action.", false);
   } catch (error) {
     return json_(errorResponse_(error));
   }
+}
+
+/**
+ * Tạo nhanh tài nguyên cho một Apps Script project test mới.
+ * Chỉ chạy thủ công từ Apps Script editor, không gọi qua Web App.
+ * Không dùng hàm này cho production vì nó tạo thư mục và spreadsheet mới.
+ */
+function setupTestEnvironment() {
+  var properties = PropertiesService.getScriptProperties();
+  var current = getConfig_();
+  if (current.driveFolderId && current.logSpreadsheetId) {
+    return {
+      reused: true,
+      driveFolderId: current.driveFolderId,
+      logSpreadsheetId: current.logSpreadsheetId,
+      logSheetName: current.logSheetName,
+    };
+  }
+
+  var folder = DriveApp.createFolder("Digital QC - Test Files");
+  var spreadsheet = SpreadsheetApp.create("Digital QC - Test Upload Log");
+  var sheet = spreadsheet.getSheets()[0];
+  sheet.setName(DIGITAL_QC.LOG_SHEET_NAME);
+  sheet.appendRow(LOG_COLUMNS);
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, LOG_COLUMNS.length);
+
+  properties.setProperties({
+    DRIVE_FOLDER_ID: folder.getId(),
+    LOG_SPREADSHEET_ID: spreadsheet.getId(),
+    LOG_SHEET_NAME: DIGITAL_QC.LOG_SHEET_NAME,
+    ENFORCE_AUTH: "false",
+    MAX_BYTES: String(DIGITAL_QC.DEFAULT_MAX_BYTES),
+  }, true);
+
+  return {
+    reused: false,
+    driveFolderId: folder.getId(),
+    logSpreadsheetId: spreadsheet.getId(),
+    logSheetName: DIGITAL_QC.LOG_SHEET_NAME,
+    spreadsheetUrl: spreadsheet.getUrl(),
+    folderUrl: folder.getUrl(),
+  };
 }
 
 function parseRequest_(event) {
@@ -202,23 +244,6 @@ function rowResult_(row) {
 
 function safeDownloadUrl_(file) {
   try { return file.getDownloadUrl(); } catch (error) { return ""; }
-}
-
-function findUploads_(data) {
-  var config = getConfig_();
-  if (!config.logSpreadsheetId) fail_("CONFIG_MISSING", "LOG_SPREADSHEET_ID is not configured.", false);
-  var sheet = getLogSheet_(config);
-  if (sheet.getLastRow() < 2) return [];
-  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, LOG_COLUMNS.length).getValues();
-  var query = String(data.query || "").trim().toLowerCase();
-  var fromDate = data.from_date ? new Date(String(data.from_date) + "T00:00:00") : null;
-  var toDate = data.to_date ? new Date(String(data.to_date) + "T23:59:59") : null;
-  return rows.filter(function (row) {
-    var uploadedAt = row[0] instanceof Date ? row[0] : new Date(row[0]);
-    var searchable = [row[1], row[2], row[3], row[4], row[5], row[6], row[11]].map(function (value) { return String(value || "").toLowerCase(); });
-    return (!query || searchable.some(function (value) { return value.indexOf(query) >= 0; })) &&
-      (!fromDate || uploadedAt >= fromDate) && (!toDate || uploadedAt <= toDate);
-  }).slice(-100).reverse().map(rowResult_);
 }
 
 function logError_(error, data) {

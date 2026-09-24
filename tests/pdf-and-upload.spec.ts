@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { createInternalDocument, markDocumentUploaded, markQrPrinted, restoreInternalDocuments, serializeInternalDocuments } from "../src/domain/document-store.js";
@@ -7,7 +8,7 @@ import { parseProductPaste } from "../src/domain/paste-excel.js";
 import { productKey, type ProductQc } from "../src/domain/product-qc.js";
 import { createQcSheetPdf } from "../src/pdf/qc-sheet.js";
 import { mergeProductPdf } from "../src/pdf/merge.js";
-import { findUploads, pingServer, uploadProductPdf } from "../src/api/upload-client.js";
+import { pingServer, uploadProductPdf } from "../src/api/upload-client.js";
 import { createQrDataUrl, getLabelTemplate, printSheetHtml } from "../src/print/label-print.js";
 
 const sampleQc: ProductQc = {
@@ -57,6 +58,28 @@ describe("product QC PDF pipeline", () => {
     const merged = await mergeProductPdf(qcPdf, await drawingPdf());
     const pdf = await PDFDocument.load(merged);
     expect(pdf.getPageCount()).toBe(3);
+  });
+
+  it("embeds Vietnamese text and paginates many measurement rows", async () => {
+    const fontBytes = new Uint8Array(await readFile("node_modules/@fontsource/noto-sans/files/noto-sans-latin-400-normal.woff"));
+    const fallbackFontBytes = new Uint8Array(await readFile("node_modules/@fontsource/noto-sans/files/noto-sans-vietnamese-400-normal.woff"));
+    const pdfBytes = await createQcSheetPdf({
+      ...sampleQc,
+      defectContent: "Không có lỗi ngoại quan; nội dung dài để kiểm tra khả năng cắt gọn trong ô PDF.",
+      measurements: Array.from({ length: 32 }, (_, index) => ({
+        no: index + 1,
+        values: ["369.5", "502.5", "20.2", "OK", "OK", "OK", "OK"],
+        visualResult: index % 2 === 0 ? "OK" : "NG",
+      })),
+    }, { fontBytes, fallbackFontBytes });
+
+    const reopened = await PDFDocument.load(pdfBytes);
+    expect(reopened.getPageCount()).toBeGreaterThan(1);
+    expect(pdfBytes.byteLength).toBeGreaterThan(5_000);
+    if (process.env.PDF_QA_OUTPUT) {
+      await mkdir("tmp/pdfs", { recursive: true });
+      await writeFile("tmp/pdfs/qc-many-measurements.pdf", pdfBytes);
+    }
   });
 
   it("parses multiple products pasted from Excel", () => {
@@ -145,25 +168,21 @@ describe("product QC PDF pipeline", () => {
 
   it("pings the configured Apps Script endpoint", async () => {
     let request: any;
+    let contentType: string | undefined;
     const result = await pingServer("https://example.test/exec", async (_input, init) => {
       request = JSON.parse(String(init?.body));
+      contentType = new Headers(init?.headers).get("content-type") ?? undefined;
       return new Response(JSON.stringify({ success: true, api_version: 1, user: "qc@example.com", allowed: true }), { headers: { "content-type": "application/json" } });
     });
     expect(request.action).toBe("ping");
     expect(request.api_version).toBe(1);
+    expect(contentType).toBe("text/plain;charset=UTF-8");
     expect(result.user).toBe("qc@example.com");
   });
 
-  it("queries uploaded documents with library filters", async () => {
-    let request: any;
-    const records = await findUploads("https://example.test/exec", { query: "PART-001", fromDate: "2026-09-01", toDate: "2026-09-30" }, async (_input, init) => {
-      request = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify({ success: true, api_version: 1, items: [{ qc_no: "QC-0001", part_no: "PART-001", open_url: "https://example.test/qc/1" }] }), { headers: { "content-type": "application/json" } });
-    });
-    expect(request.action).toBe("find_uploads");
-    expect(request.data.query).toBe("PART-001");
-    expect(request.data.from_date).toBe("2026-09-01");
-    expect(records[0].qc_no).toBe("QC-0001");
+  it("explains an HTML/404 response instead of exposing a JSON parse error", async () => {
+    await expect(pingServer("https://example.test/not-an-exec", async () => new Response("<html>Not found</html>", { status: 404 })))
+      .rejects.toThrow("response không phải JSON");
   });
 
   it("sends exactly the previewed PDF bytes and product metadata", async () => {

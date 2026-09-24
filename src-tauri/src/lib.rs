@@ -8,6 +8,8 @@ pub fn run() {
             commands::outbox_enqueue,
             commands::outbox_list,
             commands::outbox_discard,
+            commands::outbox_upload,
+            commands::outbox_retry_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Digital QC application");

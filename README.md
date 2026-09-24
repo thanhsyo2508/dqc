@@ -18,7 +18,6 @@ Màn hình tạo hồ sơ vẫn giữ nguyên nguyên tắc một sản phẩm �
 - Form `In tem QR` hỗ trợ mẫu A4, Zebra/Godex 100×50 mm, Brother 62×29 mm và máy in văn phòng generic; hộp thoại in Windows vẫn là nơi chọn thiết bị thực tế.
 - Có nút `Kiểm tra kết nối` gửi `ping` tới Web App, hiển thị trạng thái loading/thành công/lỗi trước khi upload.
 - Document Library có tìm kiếm theo mã hàng, PO, mã QC hoặc document ID để không phải cuộn danh sách dài.
-- Document Library có thể đồng bộ lại hồ sơ từ Apps Script bằng `find_uploads`, lọc theo từ khóa và khoảng ngày; dữ liệu server được khôi phục thành QR/link theo từng hồ sơ.
 - Validation hiển thị ngay cạnh trường lỗi; bảng đo responsive và có nhãn cột rõ trên mobile.
 - Giao diện mở rộng theo màn hình, ưu tiên hiển thị form và preview trong cùng một workspace.
 
@@ -47,9 +46,9 @@ Test hiện có:
 - dựng HTML print sheet nhiều bản theo mẫu tem;
 - kiểm tra metadata sản phẩm, số trang và SHA-256.
 
-UI hiện có form product-centric, dán nhiều sản phẩm từ Excel, nhiều dòng đo, nhiều PDF bản vẽ, tạo PDF phiếu QC, ghép bản vẽ, preview, tải PDF, đồng bộ thư viện và upload trực tiếp qua endpoint Web App đã cấu hình. Chưa hoàn thiện OAuth, upload/retry qua Rust outbox và xác nhận production với Drive/Sheet thật.
+UI hiện có form product-centric, dán nhiều sản phẩm từ Excel, nhiều dòng đo, nhiều PDF bản vẽ, tạo PDF phiếu QC, ghép bản vẽ, preview, tải PDF, thư viện tài liệu local và upload theo từng card. Khi chạy Tauri, PDF được ghi vào Rust Outbox trước khi gửi; lỗi mạng được giữ lại và tự retry khi mở app hoặc có mạng trở lại.
 
-Đã bổ sung khung Apps Script tại `apps-script/` và outbox Rust tại `src-tauri/src/outbox.rs`. Apps Script hiện là bộ khung deploy thử nghiệm; cần cấu hình Script Properties và tài khoản Google trước khi dùng thật.
+Đã bổ sung Apps Script tại `apps-script/` và HTTP Outbox Rust tại `src-tauri/src/outbox.rs`. Apps Script hiện là môi trường test; production vẫn cần OAuth Client ID, allowlist tài khoản QC và cấp quyền Drive/Sheet thật.
 
 Giao diện hiện dùng design system tại `design-system/digital-qc/MASTER.md`: phong cách Minimalism/Swiss, màu navy–blue–green, trạng thái tác nghiệp rõ và responsive cho màn hình nhỏ.
 
@@ -65,7 +64,7 @@ Khung Tauri:
 npm run tauri dev
 ```
 
-Lưu ý: cần chọn ít nhất một file PDF bản vẽ trong UI để tạo preview hoàn chỉnh. Font Unicode tiếng Việt và kiểm tra trực quan vẫn cần hoàn tất trước khi phát hành.
+Lưu ý: cần chọn ít nhất một file PDF bản vẽ trong UI để tạo preview hoàn chỉnh. Font Noto Sans Vietnamese đã được nhúng khi tạo phiếu QC; kiểm tra máy in thực tế và bật OAuth production vẫn là bước nghiệm thu.
 
 ## Tài liệu dự án
 
@@ -73,3 +72,7 @@ Lưu ý: cần chọn ít nhất một file PDF bản vẽ trong UI để tạo 
 - `CHANGELOG.md` — lịch sử thay đổi.
 - `EXPERIENCE.md` — bài học, quyết định và các lỗi cần tránh.
 - `design-system/digital-qc/MASTER.md` — quy chuẩn màu, typography, spacing và component UI.
+
+Hướng dẫn tạo project Apps Script bằng clasp và test Web App nằm ở `apps-script/SETUP.md`. Script `apps-script/test-webapp.ps1` có các mode kiểm tra upload, duplicate, validation, concurrency và near-limit.
+
+Client gọi Apps Script bằng request `text/plain` chứa JSON để tránh CORS preflight `OPTIONS`; không đổi thành `application/json` nếu vẫn dùng Web App Apps Script trực tiếp từ UI.

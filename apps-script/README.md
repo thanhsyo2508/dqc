@@ -1,5 +1,7 @@
 # Digital QC Apps Script
 
+> Hướng dẫn đầy đủ cho `clasp`, tạo project, khởi tạo tài nguyên test và kiểm tra Web App nằm trong [`SETUP.md`](./SETUP.md).
+
 Bộ khung server cho hợp đồng API của Digital QC. Server xử lý từng hồ sơ sản phẩm độc lập:
 
 `PDF bytes + product metadata → một file Drive + một dòng UPLOAD_LOG`

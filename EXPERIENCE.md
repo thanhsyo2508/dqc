@@ -6,6 +6,10 @@
 - Khi upload đang chạy, khóa nút tạo preview/gửi hồ sơ để tránh gửi trùng do double-click.
 - Chỉ ghi vào Document Library sau response `success: true`; lỗi upload giữ nguyên preview để người dùng thử lại.
 - Endpoint server là cấu hình người dùng, không hard-code URL hoặc token trong frontend.
+- Trong Tauri, metadata Outbox phải chứa endpoint và đủ dữ liệu QC để retry sau restart; không lưu ID token vào `meta.json`.
+- Khi retry thành công sau restart, nếu card chưa tồn tại trong runtime thì phải dựng lại card từ `qc_json` trước khi phát event upload.
+- Font PDF phải kiểm tra theo từng subset glyph; chỉ nhúng subset Vietnamese không đủ cho tiêu đề, số và chữ Latin.
+- Sau `success: true`, tách rõ hai việc: lưu metadata vào Document Library và đóng card khỏi danh sách đang nhập; không xóa hồ sơ đã lưu.
 
 ## 15. Validation và responsive form
 
@@ -26,8 +30,8 @@
 - Luôn có ping endpoint trước khi người dùng thử upload thật; lỗi URL/quyền cần được phát hiện trong dialog cấu hình với hướng khắc phục rõ ràng.
 - Trạng thái “đã cấu hình” không đồng nghĩa “server đang hoạt động”; chỉ gắn trạng thái online sau ping hoặc upload thành công.
 - Document Library phải có tìm kiếm khi số hồ sơ tăng; lọc theo mã hàng, PO, mã QC và document ID là các khóa tra cứu QC thường dùng.
-- Local storage chỉ là cache thao tác nhanh; `find_uploads` từ server mới là nguồn khôi phục hồ sơ khi đổi máy hoặc mất dữ liệu local.
-- Bản ghi đồng bộ phải giữ `qc_no`, `request_id`, `file_id`, `open_url`, metadata sản phẩm và thời gian upload để tái tạo đúng QR/link.
+- Document Library hiện là metadata local của các hồ sơ upload thành công; không tự động kéo lại toàn bộ dữ liệu server để tránh làm thư viện dài và khó phân biệt dữ liệu đang thao tác.
+- Xóa trong Document Library chỉ xóa bản ghi local trên máy hiện tại. Muốn xóa file Drive cần một quy trình quyền riêng, không được giả lập bằng cách xóa cache.
 
 Tài liệu này ghi lại các bài học và quyết định cần nhớ khi phát triển Digital QC. Mục tiêu là tránh quay lại những hướng đã biết là dễ sai hoặc khó vận hành.
 
@@ -138,3 +142,12 @@ Tài liệu này ghi lại các bài học và quyết định cần nhớ khi p
 - Sidebar desktop nên có vùng cuộn riêng; trên màn hình nhỏ chuyển sang layout không sidebar thay vì để sticky làm hẹp vùng form.
 - Dùng `datalist` cho 5 người kiểm tra gần nhất là đủ nhanh nhưng vẫn cho phép nhập tên mới; không khóa danh sách người dùng.
 - Dòng đo là các đơn vị scan riêng; margin/gap nhẹ giữa các dòng giúp giảm nhầm cột khi có nhiều mẫu.
+
+## 14. Apps Script test project
+
+- Source Apps Script nên được giữ trong thư mục riêng và quản lý bằng `.clasp.json` cục bộ; không commit cấu hình môi trường vào repo.
+- Phải test Web App bằng một Drive folder và Spreadsheet riêng trước khi trỏ app vào dữ liệu thật.
+- `setupTestEnvironment()` chỉ là tiện ích cho project test: nó tạo tài nguyên mới nếu Script Properties chưa có ID. Không chạy tùy tiện trong production.
+- Sau `clasp push`, `/exec` chưa chắc đã chạy version mới nếu deployment không được cập nhật. Luôn kiểm tra lại deployment/version sau khi sửa server.
+- Không nên bật `ENFORCE_AUTH=true` ở vòng test contract đầu tiên vì app hiện chưa hoàn tất luồng lấy Google ID token; bật sớm sẽ làm lỗi giả che khuất lỗi upload.
+- Apps Script Web App không xử lý preflight `OPTIONS` như API server thông thường. Gọi trực tiếp từ frontend bằng `application/json` sẽ dễ gặp `Failed to fetch`; dùng `text/plain` cho body JSON để giữ request CORS đơn giản.

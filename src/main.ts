@@ -5,7 +5,9 @@ import { parseProductPaste } from "./domain/paste-excel.js";
 import { productKey, type Product, type ProductQc } from "./domain/product-qc.js";
 import { mergeProductPdf } from "./pdf/merge.js";
 import { createQcSheetPdf } from "./pdf/qc-sheet.js";
-import { findUploads, pingServer, uploadProductPdf, type FindUploadRecord } from "./api/upload-client.js";
+import { loadVietnameseFont } from "./pdf/vietnamese-font.js";
+import { pingServer, uploadProductPdf } from "./api/upload-client.js";
+import { listQueuedPdfs, retryQueuedPdfs } from "./api/tauri-bridge.js";
 import { createQrDataUrl, getLabelTemplate, getPrinterProfile, LABEL_TEMPLATES, PRINTER_PROFILES, printSheetHtml } from "./print/label-print.js";
 
 let previewUrl: string | undefined;
@@ -149,7 +151,7 @@ document.querySelector(".preview-heading")?.insertAdjacentHTML("afterend", `<div
 document.querySelector<HTMLInputElement>("#inspector")?.setAttribute("list", "recentInspectors");
 document.querySelector<HTMLInputElement>("#inspector")?.setAttribute("autocomplete", "name");
 document.querySelector<HTMLInputElement>("#inspector")?.insertAdjacentHTML("afterend", `<datalist id="recentInspectors"></datalist>`);
-document.querySelector(".preview-tip")?.insertAdjacentHTML("afterend", `<details id="documentLibrary" class="library-panel"><summary class="library-summary"><span class="library-heading"><span class="library-heading-copy"><span class="eyebrow">DOCUMENT LIBRARY</span><strong>Tài liệu đã upload</strong></span><span id="uploadedCount" class="product-count">0 hồ sơ</span></span><span class="library-toggle" aria-hidden="true">${icon("chevron")}</span></summary><div class="library-content"><p class="library-description">Mở thư viện khi cần xem lại các file upload thành công theo từng mã hàng.</p><div class="library-filters"><label class="library-search-label" for="librarySearch">Mã hàng, PO, mã QC hoặc document ID<input id="librarySearch" type="search" placeholder="Ví dụ: 2410011 hoặc QC-260924" autocomplete="off" /></label><label class="library-date-label" for="libraryFrom">Từ ngày<input id="libraryFrom" type="date" /></label><label class="library-date-label" for="libraryTo">Đến ngày<input id="libraryTo" type="date" /></label><button id="syncLibrary" class="secondary library-sync" type="button">${icon("refresh")} Đồng bộ server</button></div><div id="uploadedLibrary" class="uploaded-library"></div></div></details>`);
+document.querySelector(".preview-tip")?.insertAdjacentHTML("afterend", `<details id="documentLibrary" class="library-panel"><summary class="library-summary"><span class="library-heading"><span class="library-heading-copy"><span class="eyebrow">DOCUMENT LIBRARY</span><strong>Tài liệu đã upload</strong></span><span id="uploadedCount" class="product-count">0 hồ sơ</span></span><span class="library-toggle" aria-hidden="true">${icon("chevron")}</span></summary><div class="library-content"><p class="library-description">Mở thư viện khi cần xem lại các file upload thành công theo từng mã hàng.</p><div class="library-filters"><label class="library-search-label" for="librarySearch">Mã hàng, PO, mã QC hoặc document ID<input id="librarySearch" type="search" placeholder="Ví dụ: 2410011 hoặc QC-260924" autocomplete="off" /></label><label class="library-date-label" for="libraryFrom">Từ ngày<input id="libraryFrom" type="date" /></label><label class="library-date-label" for="libraryTo">Đến ngày<input id="libraryTo" type="date" /></label></div><div id="uploadedLibrary" class="uploaded-library"></div></div></details>`);
 
 function icon(name: string): string {
   const paths: Record<string, string> = {
@@ -256,11 +258,19 @@ function renderServerStatus(state: "not-configured" | "configured" | "checking" 
 
 function renderPreviewActions(): void {
   const hasPreview = Boolean(previewBytes);
+  const current = activeDocument();
+  const alreadyUploaded = current?.status === "sent" && Boolean(current.uploaded);
   const create = document.querySelector<HTMLButtonElement>("#createPreview");
   const upload = document.querySelector<HTMLButtonElement>("#uploadPdf");
   const download = document.querySelector<HTMLButtonElement>("#downloadPdf");
   if (create) { create.disabled = isGeneratingPreview || isUploading; create.className = hasPreview ? "secondary" : "primary"; }
-  if (upload) { upload.disabled = !hasPreview || isGeneratingPreview || isUploading; upload.className = hasPreview ? "primary" : "secondary"; upload.setAttribute("aria-busy", isUploading ? "true" : "false"); }
+  if (upload) {
+    upload.disabled = !hasPreview || isGeneratingPreview || isUploading || alreadyUploaded;
+    upload.className = hasPreview && !alreadyUploaded ? "primary" : "secondary";
+    upload.setAttribute("aria-busy", isUploading ? "true" : "false");
+    upload.innerHTML = alreadyUploaded ? `${icon("check")} Đã gửi hồ sơ` : `${icon("upload")} Gửi hồ sơ`;
+    upload.title = alreadyUploaded ? "Hồ sơ này đã gửi thành công" : "Gửi hồ sơ QC";
+  }
   if (download) download.disabled = !hasPreview || isGeneratingPreview;
 }
 
@@ -433,89 +443,68 @@ function renderUploadedLibrary(): void {
     list.innerHTML = `<div class="library-empty">${query ? "Không tìm thấy hồ sơ phù hợp." : "Chưa có file upload thành công trong phiên này."}</div>`;
     return;
   }
-  list.innerHTML = uploaded.map(({ record }) => `<div class="library-item"><button type="button" class="library-open" data-library-document-id="${escapeHtml(record.documentId)}"><span class="file-type">PDF</span><span><strong>${escapeHtml(record.product.partNo)}</strong><small>${escapeHtml(record.uploaded?.qcNo ?? record.documentId)} · ${displayTime(record.uploaded?.sentAt ?? record.updatedAt)}</small></span></button><span class="library-actions">${record.uploaded?.qr?.payload ? `<button type="button" class="library-print" data-print-document-id="${escapeHtml(record.documentId)}">${icon("print")} In tem</button>` : `<span class="library-no-qr">Chưa có QR</span>`}${record.uploaded?.openUrl ? `<a class="library-link" href="${escapeHtml(record.uploaded.openUrl)}" target="_blank" rel="noreferrer">Mở</a>` : ""}</span></div>`).join("");
+  list.innerHTML = uploaded.map(({ record }) => `<div class="library-item"><button type="button" class="library-open" data-library-document-id="${escapeHtml(record.documentId)}"><span class="file-type">PDF</span><span><strong>${escapeHtml(record.product.partNo)}</strong><small>${escapeHtml(record.uploaded?.qcNo ?? record.documentId)} · ${displayTime(record.uploaded?.sentAt ?? record.updatedAt)}</small></span></button><span class="library-actions">${record.uploaded?.qr?.payload ? `<button type="button" class="library-print" data-print-document-id="${escapeHtml(record.documentId)}">${icon("print")} In tem</button>` : `<span class="library-no-qr">Chưa có QR</span>`}${record.uploaded?.openUrl ? `<a class="library-link" href="${escapeHtml(record.uploaded.openUrl)}" target="_blank" rel="noreferrer">Mở</a>` : ""}<button type="button" class="library-delete" data-delete-document-id="${escapeHtml(record.documentId)}" aria-label="Xóa hồ sơ ${escapeHtml(record.product.partNo)}" title="Xóa khỏi Document Library">${icon("trash")}</button></span></div>`).join("");
 }
 
-function documentFromServerUpload(record: FindUploadRecord, sequence: number): InternalDocument | undefined {
-  const partNo = record.part_no?.trim();
-  const stableId = record.qc_no || record.file_id || record.request_id;
-  if (!partNo || !stableId) return undefined;
-  const product = {
-    project: record.project ?? "",
-    po: record.po ?? "",
-    partNo,
-    productName: partNo,
-    lotNo: record.lot_no ?? "N/A",
-    supplier: record.supplier ?? "",
-    quantity: Number(record.quantity) || 1,
-    unit: record.unit ?? "PCS",
-    slipNo: record.slip_no ?? "",
-    receivedDate: record.received_date ?? "",
-  };
-  const document = createInternalDocument(product, sequence);
-  document.documentId = `SERVER-${stableId}`;
-  document.requestId = record.request_id;
-  document.qc.recordId = record.qc_no ?? document.qc.recordId;
-  document.qc.inspector = record.uploaded_by ?? "";
-  document.qc.inspectionDate = record.uploaded_at?.slice(0, 10) ?? document.qc.inspectionDate;
-  markDocumentUploaded(document, {
-    qcNo: record.qc_no,
-    fileName: record.file_name,
-    fileId: record.file_id,
-    openUrl: record.open_url,
-    downloadUrl: record.download_url,
-    sentAt: record.uploaded_at,
-  });
-  return document;
+function deleteUploadedDocument(documentId: string): void {
+  const record = uploadedDocuments.find((item) => item.documentId === documentId);
+  if (!record) return;
+  const partNo = record.product.partNo || record.documentId;
+  if (!window.confirm(`Xóa hồ sơ ${partNo} khỏi Document Library trên máy này? File đã upload trên Google Drive không bị xóa.`)) return;
+
+  const index = documents.findIndex((item) => item.documentId === documentId);
+  const wasSelected = index === selectedProductIndex;
+  uploadedDocuments = uploadedDocuments.filter((item) => item.documentId !== documentId);
+  drawingFilesByDocument.delete(documentId);
+  previewBytesByDocument.delete(documentId);
+  previewPageCountByDocument.delete(documentId);
+  if (index >= 0) documents.splice(index, 1);
+  if (documents.length === 0) documents = [createInternalDocument(sampleProduct, 1)];
+  if (index >= 0 && index < selectedProductIndex) selectedProductIndex -= 1;
+  selectedProductIndex = Math.max(0, Math.min(selectedProductIndex, documents.length - 1));
+  persistUploadedDocumentLibrary();
+  if (wasSelected || index >= 0) loadProductDocument(selectedProductIndex, false);
+  renderProductList();
+  renderUploadedLibrary();
+  renderDocumentRecord();
+  setMessage(`Đã xóa hồ sơ ${partNo} khỏi Document Library trên máy này.`, "success");
 }
 
-function mergeServerUpload(record: FindUploadRecord, sequence: number): boolean {
-  const serverDocument = documentFromServerUpload(record, sequence);
-  if (!serverDocument) return false;
-  const existingIndex = uploadedDocuments.findIndex((document) => document.uploaded?.qcNo === record.qc_no || document.uploaded?.fileId === record.file_id || document.uploaded?.openUrl === record.open_url);
-  if (existingIndex < 0) {
-    uploadedDocuments.push(serverDocument);
-    return true;
+function removeProductCard(documentId: string): void {
+  const index = documents.findIndex((document) => document.documentId === documentId);
+  if (index < 0) return;
+  const wasSelected = index === selectedProductIndex;
+  documents.splice(index, 1);
+  drawingFilesByDocument.delete(documentId);
+  previewBytesByDocument.delete(documentId);
+  previewPageCountByDocument.delete(documentId);
+
+  if (documents.length === 0) {
+    documents = [createInternalDocument({
+      ...sampleProduct,
+      project: "",
+      po: "",
+      partNo: "",
+      productName: "",
+      supplier: "",
+      quantity: 0,
+      slipNo: "",
+      receivedDate: "",
+    }, 1)];
   }
-  const existing = uploadedDocuments[existingIndex];
-  existing.product = serverDocument.product;
-  existing.qc.recordId = serverDocument.qc.recordId;
-  existing.qc.inspector = serverDocument.qc.inspector;
-  existing.qc.inspectionDate = serverDocument.qc.inspectionDate;
-  existing.requestId = serverDocument.requestId;
-  existing.uploaded = serverDocument.uploaded;
-  existing.status = "sent";
-  existing.updatedAt = serverDocument.updatedAt;
-  return true;
-}
+  if (index < selectedProductIndex) selectedProductIndex -= 1;
+  selectedProductIndex = Math.max(0, Math.min(selectedProductIndex, documents.length - 1));
 
-async function syncDocumentLibrary(): Promise<void> {
-  const endpoint = configuredEndpoint();
-  const button = document.querySelector<HTMLButtonElement>("#syncLibrary");
-  const query = value("librarySearch");
-  const fromDate = value("libraryFrom");
-  const toDate = value("libraryTo");
-  if (!endpoint) {
-    setMessage("Chưa có URL server. Hãy cấu hình rồi đồng bộ Document Library.", "error");
-    openServerConfig();
-    return;
-  }
-  if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Đang đồng bộ…"; }
-  renderServerStatus("checking");
-  setMessage("Đang tải hồ sơ upload từ Apps Script…");
-  try {
-    const records = await findUploads(endpoint, { query, fromDate, toDate });
-    records.forEach((record, index) => mergeServerUpload(record, index + 1));
-    persistUploadedDocumentLibrary();
-    renderUploadedLibrary();
+  if (wasSelected) {
+    previewBytes = undefined;
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      previewUrl = undefined;
+    }
+    loadProductDocument(selectedProductIndex, false);
+  } else {
     renderProductList();
-    renderServerStatus("online");
-    setMessage(`Đã đồng bộ ${records.length} hồ sơ từ server.`, "success");
-  } catch (error) {
-    renderServerStatus("error");
-    setMessage(error instanceof Error ? error.message : "Không đồng bộ được Document Library.", "error");
-  } finally {
-    if (button) { button.disabled = false; button.removeAttribute("aria-busy"); button.innerHTML = `${icon("refresh")} Đồng bộ server`; }
+    renderDocumentRecord();
   }
 }
 
@@ -531,11 +520,10 @@ function registerUploadSuccess(result: UploadSuccessRecord): void {
   if (existingIndex >= 0) uploadedDocuments[existingIndex] = current;
   else uploadedDocuments.push(current);
   persistUploadedDocumentLibrary();
-  renderProductList();
+  removeProductCard(current.documentId);
   renderUploadedLibrary();
-  renderDocumentRecord();
   renderServerStatus("online");
-  setMessage(`Upload thành công cho mã hàng ${current.product.partNo}. Hồ sơ đã được lưu vào Document Library.`, "success");
+  setMessage(`Upload thành công cho mã hàng ${current.product.partNo}. Card đã được đóng và hồ sơ đã lưu vào Document Library.`, "success");
 }
 
 function normalizeUploadSuccess(detail: UploadSuccessRecord & Record<string, unknown>): UploadSuccessRecord {
@@ -738,9 +726,13 @@ document.querySelector<HTMLDetailsElement>("#documentLibrary")?.addEventListener
 document.querySelector<HTMLInputElement>("#librarySearch")?.addEventListener("input", () => renderUploadedLibrary());
 document.querySelector<HTMLInputElement>("#libraryFrom")?.addEventListener("change", () => renderUploadedLibrary());
 document.querySelector<HTMLInputElement>("#libraryTo")?.addEventListener("change", () => renderUploadedLibrary());
-document.querySelector<HTMLButtonElement>("#syncLibrary")?.addEventListener("click", () => { void syncDocumentLibrary(); });
 document.querySelector<HTMLDivElement>("#uploadedLibrary")!.addEventListener("click", (event) => {
   if ((event.target as HTMLElement).closest("a")) return;
+  const deleteTarget = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-delete-document-id]");
+  if (deleteTarget?.dataset.deleteDocumentId) {
+    deleteUploadedDocument(deleteTarget.dataset.deleteDocumentId);
+    return;
+  }
   const printTarget = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-print-document-id]");
   if (printTarget?.dataset.printDocumentId) {
     openLabelPrint(printTarget.dataset.printDocumentId);
@@ -765,6 +757,41 @@ window.addEventListener("digital-qc:upload-success", (event) => {
   const detail = (event as CustomEvent<UploadSuccessRecord & Record<string, unknown>>).detail;
   if (detail) registerUploadSuccess(normalizeUploadSuccess(detail));
 });
+
+async function retryOutboxOnStartup(): Promise<void> {
+  try {
+    const queuedBeforeRetry = await listQueuedPdfs();
+    if (queuedBeforeRetry.length > 0) {
+      setMessage(`${queuedBeforeRetry.length} hồ sơ đang được bảo toàn trong Outbox; app sẽ tự thử gửi lại khi có mạng.`, "info");
+    }
+    const results = await retryQueuedPdfs();
+    const successful = results.filter((result) => result.success && result.response);
+    if (successful.length === 0) return;
+    successful.forEach((result) => {
+      const response = result.response ?? {};
+      if (!documents.some((document) => document.documentId === result.document_id)) {
+        try {
+          const restoredQc = JSON.parse(result.meta.qc_json) as ProductQc;
+          const restored = createInternalDocument(restoredQc.product, documents.length + 1);
+          restored.documentId = result.document_id;
+          restored.requestId = result.request_id;
+          restored.qc = restoredQc;
+          restored.product = restoredQc.product;
+          documents.push(restored);
+        } catch {
+          // The upload result is still retained by the server even if old metadata cannot restore the card.
+        }
+      }
+      window.dispatchEvent(new CustomEvent("digital-qc:upload-success", {
+        detail: { ...response, documentId: result.document_id, requestId: result.request_id },
+      }));
+    });
+    renderProductList();
+    if (successful.length > 0) setMessage(`Đã tự động gửi ${successful.length} hồ sơ trong Outbox sau khi kết nối trở lại.`, "success");
+  } catch {
+    // Browser mode and an unavailable Tauri bridge are both safe no-ops here.
+  }
+}
 
 document.querySelector<HTMLButtonElement>("#importExcel")!.addEventListener("click", () => {
   try {
@@ -979,7 +1006,7 @@ document.querySelector<HTMLButtonElement>("#createPreview")!.addEventListener("c
     const qc = readProductQc();
     const current = activeDocument();
     setMessage(`Đang tạo phiếu QC và ghép ${drawingFiles.length} bản vẽ…`);
-    let mergedBytes = await createQcSheetPdf(qc);
+    let mergedBytes = await createQcSheetPdf(qc, await loadVietnameseFont());
     for (const [index, drawing] of drawingFiles.entries()) {
       setMessage(`Đang ghép bản vẽ ${index + 1}/${drawingFiles.length}…`);
       mergedBytes = await mergeProductPdf(mergedBytes, new Uint8Array(await drawing.arrayBuffer()));
@@ -1018,6 +1045,11 @@ document.querySelector<HTMLButtonElement>("#createPreview")!.addEventListener("c
 
 document.querySelector<HTMLButtonElement>("#uploadPdf")!.addEventListener("click", async () => {
   if (!previewBytes || isGeneratingPreview || isUploading) return;
+  const selectedDocument = activeDocument();
+  if (selectedDocument.status === "sent" && selectedDocument.uploaded) {
+    setMessage("Hồ sơ này đã gửi thành công. Hãy chỉnh sửa và tạo preview mới nếu cần gửi lại.", "info");
+    return;
+  }
   const endpoint = configuredEndpoint();
   if (!endpoint) {
     setMessage("Chưa có URL server upload. Hãy cấu hình trước khi gửi hồ sơ.", "error");
@@ -1082,6 +1114,8 @@ renderRecentInspectors();
 renderUploadedLibrary();
 renderServerStatus(configuredEndpoint() ? "configured" : "not-configured");
 renderPreviewActions();
+void retryOutboxOnStartup();
+window.addEventListener("online", () => { void retryOutboxOnStartup(); });
 
 window.addEventListener("beforeunload", () => {
   if (previewUrl) URL.revokeObjectURL(previewUrl);
