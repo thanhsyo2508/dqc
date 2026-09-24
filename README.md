@@ -16,6 +16,8 @@ Màn hình tạo hồ sơ vẫn giữ nguyên nguyên tắc một sản phẩm �
 - Khi server trả thành công, metadata được tự động đưa vào `DOCUMENT LIBRARY`; event upload có correlation theo `documentId`/`requestId` để không nhầm mã hàng.
 - QR được lưu cùng hồ sơ upload dưới dạng payload `open_url`, số lần in, thời điểm in, mẫu tem và profile máy in; có thể mở lại từ Document Library.
 - Form `In tem QR` hỗ trợ mẫu A4, Zebra/Godex 100×50 mm, Brother 62×29 mm và máy in văn phòng generic; hộp thoại in Windows vẫn là nơi chọn thiết bị thực tế.
+- Có nút `Kiểm tra kết nối` gửi `ping` tới Web App, hiển thị trạng thái loading/thành công/lỗi trước khi upload.
+- Document Library có tìm kiếm theo mã hàng, PO, mã QC hoặc document ID để không phải cuộn danh sách dài.
 - Validation hiển thị ngay cạnh trường lỗi; bảng đo responsive và có nhãn cột rõ trên mobile.
 - Giao diện mở rộng theo màn hình, ưu tiên hiển thị form và preview trong cùng một workspace.
 

@@ -5,7 +5,7 @@ import { parseProductPaste } from "./domain/paste-excel.js";
 import { productKey, type Product, type ProductQc } from "./domain/product-qc.js";
 import { mergeProductPdf } from "./pdf/merge.js";
 import { createQcSheetPdf } from "./pdf/qc-sheet.js";
-import { uploadProductPdf } from "./api/upload-client.js";
+import { pingServer, uploadProductPdf } from "./api/upload-client.js";
 import { createQrDataUrl, getLabelTemplate, getPrinterProfile, LABEL_TEMPLATES, PRINTER_PROFILES, printSheetHtml } from "./print/label-print.js";
 
 let previewUrl: string | undefined;
@@ -142,14 +142,14 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   </div>
 `;
 
-document.querySelector(".app-shell")?.insertAdjacentHTML("beforeend", `<dialog id="serverConfigDialog" class="server-config"><form id="serverConfigForm" method="dialog"><div class="dialog-heading"><span class="eyebrow">UPLOAD CONNECTION</span><h2>Cấu hình server upload</h2><p>Dán URL Web App <code>/exec</code> để gửi hồ sơ PDF lên kho tài liệu.</p></div><label class="field">URL server *<input id="serverEndpoint" type="url" required placeholder="https://script.google.com/macros/s/.../exec" aria-describedby="serverEndpointError" /><small id="serverEndpointError" class="field-error"></small></label><div class="dialog-actions"><button id="cancelServerConfig" class="secondary" type="button">Hủy</button><button class="primary" type="submit">Lưu cấu hình</button></div></form></dialog>`);
+document.querySelector(".app-shell")?.insertAdjacentHTML("beforeend", `<dialog id="serverConfigDialog" class="server-config"><form id="serverConfigForm" method="dialog"><div class="dialog-heading"><span class="eyebrow">UPLOAD CONNECTION</span><h2>Cấu hình server upload</h2><p>Dán URL Web App <code>/exec</code> để gửi hồ sơ PDF lên kho tài liệu.</p></div><label class="field">URL server *<input id="serverEndpoint" type="url" required placeholder="https://script.google.com/macros/s/.../exec" aria-describedby="serverEndpointError" /><small id="serverEndpointError" class="field-error"></small></label><p id="serverPingMessage" class="dialog-message" role="status" aria-live="polite"></p><div class="dialog-actions"><button id="cancelServerConfig" class="secondary" type="button">Hủy</button><button id="pingServer" class="secondary" type="button">Kiểm tra kết nối</button><button class="primary" type="submit">Lưu cấu hình</button></div></form></dialog>`);
 document.querySelector(".app-shell")?.insertAdjacentHTML("beforeend", `<dialog id="labelPrintDialog" class="label-print-dialog"><form id="labelPrintForm" method="dialog"><div class="dialog-heading"><span class="eyebrow">QR LABEL STUDIO</span><h2>In tem QR</h2><p id="labelPrintDocument">Chọn mẫu tem và profile máy in cho mã hàng.</p></div><div class="label-options"><label class="field">Dòng máy in<select id="printerProfile">${PRINTER_PROFILES.map((profile) => `<option value="${profile.id}">${profile.name}</option>`).join("")}</select><small id="printerProfileHint" class="field-hint"></small></label><label class="field">Form tem<select id="labelTemplate">${LABEL_TEMPLATES.map((template) => `<option value="${template.id}">${template.name}</option>`).join("")}</select><small id="labelTemplateHint" class="field-hint"></small></label><label class="field">Số bản in<input id="labelCopies" type="number" min="1" max="100" value="1" /></label></div><div id="labelPreview" class="label-preview" aria-live="polite"></div><div class="dialog-actions"><button id="cancelLabelPrint" class="secondary" type="button">Hủy</button><button id="confirmLabelPrint" class="primary" type="submit">${icon("print")} Mở hộp thoại in</button></div></form></dialog>`);
 
 document.querySelector(".preview-heading")?.insertAdjacentHTML("afterend", `<div id="documentRecord" class="document-record"><div><span class="eyebrow">MÃ HÀNG</span><strong id="documentPartNo">2410011-FR1-014</strong><small id="documentUpdated">Chưa lưu thay đổi</small></div><span id="documentStatus" class="document-status draft">Nháp</span></div>`);
 document.querySelector<HTMLInputElement>("#inspector")?.setAttribute("list", "recentInspectors");
 document.querySelector<HTMLInputElement>("#inspector")?.setAttribute("autocomplete", "name");
 document.querySelector<HTMLInputElement>("#inspector")?.insertAdjacentHTML("afterend", `<datalist id="recentInspectors"></datalist>`);
-document.querySelector(".preview-tip")?.insertAdjacentHTML("afterend", `<details id="documentLibrary" class="library-panel"><summary class="library-summary"><span class="library-heading"><span class="library-heading-copy"><span class="eyebrow">DOCUMENT LIBRARY</span><strong>Tài liệu đã upload</strong></span><span id="uploadedCount" class="product-count">0 hồ sơ</span></span><span class="library-toggle" aria-hidden="true">${icon("chevron")}</span></summary><div class="library-content"><p class="library-description">Mở thư viện khi cần xem lại các file upload thành công theo từng mã hàng.</p><div id="uploadedLibrary" class="uploaded-library"></div></div></details>`);
+document.querySelector(".preview-tip")?.insertAdjacentHTML("afterend", `<details id="documentLibrary" class="library-panel"><summary class="library-summary"><span class="library-heading"><span class="library-heading-copy"><span class="eyebrow">DOCUMENT LIBRARY</span><strong>Tài liệu đã upload</strong></span><span id="uploadedCount" class="product-count">0 hồ sơ</span></span><span class="library-toggle" aria-hidden="true">${icon("chevron")}</span></summary><div class="library-content"><p class="library-description">Mở thư viện khi cần xem lại các file upload thành công theo từng mã hàng.</p><label class="library-search-label" for="librarySearch">Tìm mã hàng hoặc mã QC<input id="librarySearch" type="search" placeholder="Ví dụ: 2410011 hoặc QC-260924" autocomplete="off" /></label><div id="uploadedLibrary" class="uploaded-library"></div></div></details>`);
 
 function icon(name: string): string {
   const paths: Record<string, string> = {
@@ -244,11 +244,11 @@ function clearFieldErrors(): void {
   document.querySelectorAll<HTMLElement>("[aria-invalid='true']").forEach((element) => element.setAttribute("aria-invalid", "false"));
 }
 
-function renderServerStatus(state: "not-configured" | "configured" | "uploading" | "online" | "error"): void {
+function renderServerStatus(state: "not-configured" | "configured" | "checking" | "uploading" | "online" | "error"): void {
   const button = document.querySelector<HTMLButtonElement>("#serverStatus");
   const label = document.querySelector<HTMLElement>("#serverStatusText");
   if (!button || !label) return;
-  const labels = { "not-configured": "Chưa cấu hình server", configured: "Server đã cấu hình", uploading: "Đang gửi hồ sơ…", online: "Đã upload thành công", error: "Upload lỗi · Bấm để sửa" };
+  const labels = { "not-configured": "Chưa cấu hình server", configured: "Server đã cấu hình", checking: "Đang kiểm tra server…", uploading: "Đang gửi hồ sơ…", online: "Server đang hoạt động", error: "Server lỗi · Bấm để sửa" };
   label.textContent = labels[state];
   button.className = `connection-pill is-${state}`;
 }
@@ -413,15 +413,17 @@ function renderUploadedLibrary(): void {
   const library = document.querySelector<HTMLDetailsElement>("#documentLibrary");
   const list = document.querySelector<HTMLDivElement>("#uploadedLibrary");
   const count = document.querySelector<HTMLSpanElement>("#uploadedCount");
-  const uploaded = uploadedDocuments.map((record) => ({ record }));
-  if (count) count.textContent = `${uploaded.length} hồ sơ`;
+  const query = value("librarySearch").toLowerCase();
+  const filteredDocuments = uploadedDocuments.filter((record) => [record.product.partNo, record.product.po, record.uploaded?.qcNo, record.documentId].some((field) => field?.toLowerCase().includes(query)));
+  const uploaded = filteredDocuments.map((record) => ({ record }));
+  if (count) count.textContent = query ? `${uploaded.length}/${uploadedDocuments.length} hồ sơ` : `${uploaded.length} hồ sơ`;
   if (!list) return;
   if (!library?.open) {
     list.innerHTML = `<div class="library-empty">Nhấn để mở thư viện tài liệu.</div>`;
     return;
   }
   if (uploaded.length === 0) {
-    list.innerHTML = `<div class="library-empty">Chưa có file upload thành công trong phiên này.</div>`;
+    list.innerHTML = `<div class="library-empty">${query ? "Không tìm thấy hồ sơ phù hợp." : "Chưa có file upload thành công trong phiên này."}</div>`;
     return;
   }
   list.innerHTML = uploaded.map(({ record }) => `<div class="library-item"><button type="button" class="library-open" data-library-document-id="${escapeHtml(record.documentId)}"><span class="file-type">PDF</span><span><strong>${escapeHtml(record.product.partNo)}</strong><small>${escapeHtml(record.uploaded?.qcNo ?? record.documentId)} · ${displayTime(record.uploaded?.sentAt ?? record.updatedAt)}</small></span></button><span class="library-actions">${record.uploaded?.qr?.payload ? `<button type="button" class="library-print" data-print-document-id="${escapeHtml(record.documentId)}">${icon("print")} In tem</button>` : `<span class="library-no-qr">Chưa có QR</span>`}${record.uploaded?.openUrl ? `<a class="library-link" href="${escapeHtml(record.uploaded.openUrl)}" target="_blank" rel="noreferrer">Mở</a>` : ""}</span></div>`).join("");
@@ -643,6 +645,7 @@ document.querySelector<HTMLDivElement>("#productList")!.addEventListener("click"
 });
 
 document.querySelector<HTMLDetailsElement>("#documentLibrary")?.addEventListener("toggle", () => renderUploadedLibrary());
+document.querySelector<HTMLInputElement>("#librarySearch")?.addEventListener("input", () => renderUploadedLibrary());
 document.querySelector<HTMLDivElement>("#uploadedLibrary")!.addEventListener("click", (event) => {
   if ((event.target as HTMLElement).closest("a")) return;
   const printTarget = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-print-document-id]");
@@ -787,6 +790,35 @@ function openServerConfig(): void {
 
 document.querySelector<HTMLButtonElement>("#serverStatus")!.addEventListener("click", openServerConfig);
 document.querySelector<HTMLButtonElement>("#cancelServerConfig")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#serverConfigDialog")?.close());
+document.querySelector<HTMLButtonElement>("#pingServer")!.addEventListener("click", async () => {
+  const endpoint = value("serverEndpoint");
+  const button = document.querySelector<HTMLButtonElement>("#pingServer")!;
+  const message = document.querySelector<HTMLElement>("#serverPingMessage")!;
+  if (!endpoint) { setFieldError("serverEndpoint", "Vui lòng nhập URL server."); return; }
+  setFieldError("serverEndpoint", "");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Đang kiểm tra…";
+  message.className = "dialog-message is-loading";
+  message.textContent = "Đang gửi ping đến Web App…";
+  renderServerStatus("checking");
+  try {
+    const result = await pingServer(endpoint);
+    renderServerStatus("online");
+    message.className = "dialog-message is-success";
+    message.textContent = result.user ? `Kết nối thành công · tài khoản: ${result.user}` : "Kết nối thành công · Web App đang hoạt động.";
+    setMessage("Đã kiểm tra kết nối server thành công.", "success");
+  } catch (error) {
+    renderServerStatus("error");
+    message.className = "dialog-message is-error";
+    message.textContent = error instanceof Error ? error.message : "Không kết nối được server.";
+    setMessage("Không kiểm tra được server. Kiểm tra URL hoặc quyền truy cập rồi thử lại.", "error");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = "Kiểm tra kết nối";
+  }
+});
 document.querySelector<HTMLFormElement>("#serverConfigForm")!.addEventListener("submit", (event) => {
   event.preventDefault();
   const endpoint = value("serverEndpoint");

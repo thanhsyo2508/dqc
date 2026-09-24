@@ -8,6 +8,8 @@ Các thay đổi đáng chú ý của dự án Digital QC.
 
 - Lưu payload QR `open_url` và lịch sử in ngay trong metadata của hồ sơ upload thành công.
 - Thêm `QR Label Studio`: preview QR, chọn profile Zebra/Brother/Godex/Windows và mẫu tem A4/tem cuộn, in nhiều bản qua hộp thoại hệ thống.
+- Thêm ping kiểm tra kết nối Web App ngay trong hộp thoại cấu hình server, có feedback loading/success/error.
+- Thêm tìm kiếm Document Library theo mã hàng, PO, mã QC và document ID.
 
 - Thêm nút `Gửi hồ sơ` dùng đúng bytes PDF đã preview; upload theo từng card mã hàng.
 - Thêm hộp cấu hình URL Web App `/exec`, trạng thái server động và feedback upload thành công/thất bại.

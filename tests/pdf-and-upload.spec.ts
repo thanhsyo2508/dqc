@@ -7,7 +7,7 @@ import { parseProductPaste } from "../src/domain/paste-excel.js";
 import { productKey, type ProductQc } from "../src/domain/product-qc.js";
 import { createQcSheetPdf } from "../src/pdf/qc-sheet.js";
 import { mergeProductPdf } from "../src/pdf/merge.js";
-import { uploadProductPdf } from "../src/api/upload-client.js";
+import { pingServer, uploadProductPdf } from "../src/api/upload-client.js";
 import { createQrDataUrl, getLabelTemplate, printSheetHtml } from "../src/print/label-print.js";
 
 const sampleQc: ProductQc = {
@@ -141,6 +141,17 @@ describe("product QC PDF pipeline", () => {
   it("generates a QR image from the stored URL payload", async () => {
     const dataUrl = await createQrDataUrl("https://example.test/qc/1");
     expect(dataUrl).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("pings the configured Apps Script endpoint", async () => {
+    let request: any;
+    const result = await pingServer("https://example.test/exec", async (_input, init) => {
+      request = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ success: true, api_version: 1, user: "qc@example.com", allowed: true }), { headers: { "content-type": "application/json" } });
+    });
+    expect(request.action).toBe("ping");
+    expect(request.api_version).toBe(1);
+    expect(result.user).toBe("qc@example.com");
   });
 
   it("sends exactly the previewed PDF bytes and product metadata", async () => {

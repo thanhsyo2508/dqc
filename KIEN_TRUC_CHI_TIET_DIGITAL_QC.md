@@ -635,3 +635,8 @@ Khóa hàng tiêu đề, tạo bộ lọc theo `project`, `po`, `part_no`, `prod
 - `QR Label Studio` cung cấp các preset A4 3×8, A4 2×4, tem cuộn 100×50 mm và 62×29 mm; profile Zebra, Brother, Godex, Windows system và generic A4 chọn preset phù hợp.
 - Print sheet dùng payload đã lưu để dựng QR lại, hỗ trợ số lượng 1–100 bản và ghi lại `printCount/printedAt` sau khi mở hộp thoại in.
 - Giai đoạn hiện tại dùng system print dialog để tương thích nhiều dòng máy in. In trực tiếp qua driver/Tauri native là hạng mục riêng, cần kiểm thử từng model và driver thực tế.
+
+### Kiểm tra kết nối và tra cứu thư viện
+
+- `pingServer` gửi action `ping` cùng `api_version` tới Web App; UI phân biệt `configured`, `checking`, `online` và `error`, không coi việc đã lưu URL là server đang hoạt động.
+- Document Library lọc client-side theo `partNo`, `po`, `qcNo` và `documentId`; ô tìm kiếm vẫn nằm trong vùng `<details>` để không làm danh sách dài chiếm màn hình khi chưa mở.

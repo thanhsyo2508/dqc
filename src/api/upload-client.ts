@@ -15,6 +15,15 @@ export interface UploadResponse {
   retryable?: boolean;
 }
 
+export interface PingResponse {
+  success: boolean;
+  api_version: number;
+  user?: string;
+  allowed?: boolean;
+  message?: string;
+  code?: string;
+}
+
 export interface UploadOptions {
   endpoint: string;
   requestId: string;
@@ -23,6 +32,17 @@ export interface UploadOptions {
   apiVersion?: number;
   idToken?: string;
   fetchImpl?: typeof fetch;
+}
+
+export async function pingServer(endpoint: string, fetchImpl: typeof fetch = fetch): Promise<PingResponse> {
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "ping", api_version: 1 }),
+  });
+  const result = (await response.json()) as PingResponse;
+  if (!result.success) throw new Error(result.message ?? result.code ?? "Server ping failed");
+  return result;
 }
 
 async function sha256(bytes: Uint8Array): Promise<string> {

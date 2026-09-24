@@ -21,6 +21,12 @@
 - Tem roll phải dùng `@page size` đúng khổ và có `page-break-after`; nếu không, máy in nhiệt dễ tự co giãn hoặc ghép nhiều tem vào một trang.
 - Không ghi ảnh QR base64 vào local storage; chỉ lưu payload URL và metadata lịch sử in.
 
+## 17. Kết nối và thư viện tài liệu
+
+- Luôn có ping endpoint trước khi người dùng thử upload thật; lỗi URL/quyền cần được phát hiện trong dialog cấu hình với hướng khắc phục rõ ràng.
+- Trạng thái “đã cấu hình” không đồng nghĩa “server đang hoạt động”; chỉ gắn trạng thái online sau ping hoặc upload thành công.
+- Document Library phải có tìm kiếm khi số hồ sơ tăng; lọc theo mã hàng, PO, mã QC và document ID là các khóa tra cứu QC thường dùng.
+
 Tài liệu này ghi lại các bài học và quyết định cần nhớ khi phát triển Digital QC. Mục tiêu là tránh quay lại những hướng đã biết là dễ sai hoặc khó vận hành.
 
 ## 1. Định hướng nghiệp vụ
