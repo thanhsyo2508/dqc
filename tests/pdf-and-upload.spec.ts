@@ -7,7 +7,7 @@ import { parseProductPaste } from "../src/domain/paste-excel.js";
 import { productKey, type ProductQc } from "../src/domain/product-qc.js";
 import { createQcSheetPdf } from "../src/pdf/qc-sheet.js";
 import { mergeProductPdf } from "../src/pdf/merge.js";
-import { pingServer, uploadProductPdf } from "../src/api/upload-client.js";
+import { findUploads, pingServer, uploadProductPdf } from "../src/api/upload-client.js";
 import { createQrDataUrl, getLabelTemplate, printSheetHtml } from "../src/print/label-print.js";
 
 const sampleQc: ProductQc = {
@@ -152,6 +152,18 @@ describe("product QC PDF pipeline", () => {
     expect(request.action).toBe("ping");
     expect(request.api_version).toBe(1);
     expect(result.user).toBe("qc@example.com");
+  });
+
+  it("queries uploaded documents with library filters", async () => {
+    let request: any;
+    const records = await findUploads("https://example.test/exec", { query: "PART-001", fromDate: "2026-09-01", toDate: "2026-09-30" }, async (_input, init) => {
+      request = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ success: true, api_version: 1, items: [{ qc_no: "QC-0001", part_no: "PART-001", open_url: "https://example.test/qc/1" }] }), { headers: { "content-type": "application/json" } });
+    });
+    expect(request.action).toBe("find_uploads");
+    expect(request.data.query).toBe("PART-001");
+    expect(request.data.from_date).toBe("2026-09-01");
+    expect(records[0].qc_no).toBe("QC-0001");
   });
 
   it("sends exactly the previewed PDF bytes and product metadata", async () => {

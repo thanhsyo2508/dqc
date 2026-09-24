@@ -26,6 +26,8 @@
 - Luôn có ping endpoint trước khi người dùng thử upload thật; lỗi URL/quyền cần được phát hiện trong dialog cấu hình với hướng khắc phục rõ ràng.
 - Trạng thái “đã cấu hình” không đồng nghĩa “server đang hoạt động”; chỉ gắn trạng thái online sau ping hoặc upload thành công.
 - Document Library phải có tìm kiếm khi số hồ sơ tăng; lọc theo mã hàng, PO, mã QC và document ID là các khóa tra cứu QC thường dùng.
+- Local storage chỉ là cache thao tác nhanh; `find_uploads` từ server mới là nguồn khôi phục hồ sơ khi đổi máy hoặc mất dữ liệu local.
+- Bản ghi đồng bộ phải giữ `qc_no`, `request_id`, `file_id`, `open_url`, metadata sản phẩm và thời gian upload để tái tạo đúng QR/link.
 
 Tài liệu này ghi lại các bài học và quyết định cần nhớ khi phát triển Digital QC. Mục tiêu là tránh quay lại những hướng đã biết là dễ sai hoặc khó vận hành.
 

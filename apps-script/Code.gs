@@ -192,8 +192,11 @@ function nextQcNo_(sheet) {
 
 function rowResult_(row) {
   return {
-    qc_no: row[1], product_key: row[3], file_name: row[1] + "-" + row[6] + ".pdf", file_id: row[16],
-    open_url: row[17], download_url: row[18], duplicate: false,
+    uploaded_at: row[0], qc_no: row[1], request_id: row[2], product_key: row[3],
+    project: row[4], po: row[5], part_no: row[6], lot_no: row[7], supplier: row[8],
+    quantity: row[9], unit: row[10], slip_no: row[11], received_date: row[12], page_count: row[13],
+    size_bytes: row[14], sha256: row[15], file_name: row[1] + "-" + row[6] + ".pdf", file_id: row[16],
+    open_url: row[17], download_url: row[18], uploaded_by: row[19], status: row[20], duplicate: false,
   };
 }
 
@@ -207,10 +210,14 @@ function findUploads_(data) {
   var sheet = getLogSheet_(config);
   if (sheet.getLastRow() < 2) return [];
   var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, LOG_COLUMNS.length).getValues();
+  var query = String(data.query || "").trim().toLowerCase();
+  var fromDate = data.from_date ? new Date(String(data.from_date) + "T00:00:00") : null;
+  var toDate = data.to_date ? new Date(String(data.to_date) + "T23:59:59") : null;
   return rows.filter(function (row) {
-    return (!data.project || String(row[4]) === String(data.project)) &&
-      (!data.po || String(row[5]) === String(data.po)) &&
-      (!data.part_no || String(row[6]) === String(data.part_no));
+    var uploadedAt = row[0] instanceof Date ? row[0] : new Date(row[0]);
+    var searchable = [row[1], row[2], row[3], row[4], row[5], row[6], row[11]].map(function (value) { return String(value || "").toLowerCase(); });
+    return (!query || searchable.some(function (value) { return value.indexOf(query) >= 0; })) &&
+      (!fromDate || uploadedAt >= fromDate) && (!toDate || uploadedAt <= toDate);
   }).slice(-100).reverse().map(rowResult_);
 }
 

@@ -24,6 +24,45 @@ export interface PingResponse {
   code?: string;
 }
 
+export interface FindUploadsQuery {
+  query?: string;
+  fromDate?: string;
+  toDate?: string;
+}
+
+export interface FindUploadRecord {
+  qc_no?: string;
+  request_id?: string;
+  product_key?: string;
+  project?: string;
+  po?: string;
+  part_no?: string;
+  lot_no?: string;
+  supplier?: string;
+  quantity?: number;
+  unit?: string;
+  slip_no?: string;
+  received_date?: string;
+  uploaded_at?: string;
+  page_count?: number;
+  size_bytes?: number;
+  sha256?: string;
+  file_name?: string;
+  file_id?: string;
+  open_url?: string;
+  download_url?: string;
+  uploaded_by?: string;
+  status?: string;
+}
+
+export interface FindUploadsResponse {
+  success: boolean;
+  api_version: number;
+  items: FindUploadRecord[];
+  message?: string;
+  code?: string;
+}
+
 export interface UploadOptions {
   endpoint: string;
   requestId: string;
@@ -43,6 +82,21 @@ export async function pingServer(endpoint: string, fetchImpl: typeof fetch = fet
   const result = (await response.json()) as PingResponse;
   if (!result.success) throw new Error(result.message ?? result.code ?? "Server ping failed");
   return result;
+}
+
+export async function findUploads(endpoint: string, query: FindUploadsQuery = {}, fetchImpl: typeof fetch = fetch): Promise<FindUploadRecord[]> {
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "find_uploads",
+      api_version: 1,
+      data: { query: query.query?.trim() || undefined, from_date: query.fromDate || undefined, to_date: query.toDate || undefined },
+    }),
+  });
+  const result = (await response.json()) as FindUploadsResponse;
+  if (!result.success) throw new Error(result.message ?? result.code ?? "Could not load uploaded documents");
+  return Array.isArray(result.items) ? result.items : [];
 }
 
 async function sha256(bytes: Uint8Array): Promise<string> {

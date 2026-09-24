@@ -640,3 +640,11 @@ Khóa hàng tiêu đề, tạo bộ lọc theo `project`, `po`, `part_no`, `prod
 
 - `pingServer` gửi action `ping` cùng `api_version` tới Web App; UI phân biệt `configured`, `checking`, `online` và `error`, không coi việc đã lưu URL là server đang hoạt động.
 - Document Library lọc client-side theo `partNo`, `po`, `qcNo` và `documentId`; ô tìm kiếm vẫn nằm trong vùng `<details>` để không làm danh sách dài chiếm màn hình khi chưa mở.
+- `find_uploads` nhận `query`, `from_date`, `to_date` và trả metadata hồ sơ từ `UPLOAD_LOG`; UI upsert theo `qc_no`/`file_id`/`open_url`, sau đó lưu cache local để mở lại QR/link nhanh.
+
+## 24. Điều kiện để hoàn tất các mốc production
+
+- Cần URL Web App `/exec`, `DRIVE_FOLDER_ID`, `LOG_SPREADSHEET_ID` và một bộ PDF thử nghiệm để chạy kiểm thử server thật.
+- Cần OAuth Client ID, redirect loopback và danh sách tài khoản QC trước khi bật `ENFORCE_AUTH=true`.
+- Cần ít nhất một model thực tế của Zebra, Brother hoặc Godex, khổ tem, driver và mẫu tem để hiệu chỉnh offset/in nhiệt.
+- Tauri outbox mới chỉ có enqueue/list/discard; trước khi gọi là hoàn tất phải nối worker đọc `file.pdf` + `meta.json`, retry cùng `request_id` và xóa item sau response thành công.

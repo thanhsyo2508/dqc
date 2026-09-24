@@ -18,6 +18,7 @@ Màn hình tạo hồ sơ vẫn giữ nguyên nguyên tắc một sản phẩm �
 - Form `In tem QR` hỗ trợ mẫu A4, Zebra/Godex 100×50 mm, Brother 62×29 mm và máy in văn phòng generic; hộp thoại in Windows vẫn là nơi chọn thiết bị thực tế.
 - Có nút `Kiểm tra kết nối` gửi `ping` tới Web App, hiển thị trạng thái loading/thành công/lỗi trước khi upload.
 - Document Library có tìm kiếm theo mã hàng, PO, mã QC hoặc document ID để không phải cuộn danh sách dài.
+- Document Library có thể đồng bộ lại hồ sơ từ Apps Script bằng `find_uploads`, lọc theo từ khóa và khoảng ngày; dữ liệu server được khôi phục thành QR/link theo từng hồ sơ.
 - Validation hiển thị ngay cạnh trường lỗi; bảng đo responsive và có nhãn cột rõ trên mobile.
 - Giao diện mở rộng theo màn hình, ưu tiên hiển thị form và preview trong cùng một workspace.
 
@@ -46,7 +47,7 @@ Test hiện có:
 - dựng HTML print sheet nhiều bản theo mẫu tem;
 - kiểm tra metadata sản phẩm, số trang và SHA-256.
 
-UI hiện có form product-centric, dán nhiều sản phẩm từ Excel, nhiều dòng đo, nhiều PDF bản vẽ, tạo PDF phiếu QC, ghép bản vẽ, preview, tải PDF và upload trực tiếp qua endpoint Web App đã cấu hình. Chưa hoàn thiện OAuth, upload qua Rust outbox và xác nhận production với Drive/Sheet thật.
+UI hiện có form product-centric, dán nhiều sản phẩm từ Excel, nhiều dòng đo, nhiều PDF bản vẽ, tạo PDF phiếu QC, ghép bản vẽ, preview, tải PDF, đồng bộ thư viện và upload trực tiếp qua endpoint Web App đã cấu hình. Chưa hoàn thiện OAuth, upload/retry qua Rust outbox và xác nhận production với Drive/Sheet thật.
 
 Đã bổ sung khung Apps Script tại `apps-script/` và outbox Rust tại `src-tauri/src/outbox.rs`. Apps Script hiện là bộ khung deploy thử nghiệm; cần cấu hình Script Properties và tài khoản Google trước khi dùng thật.
 
