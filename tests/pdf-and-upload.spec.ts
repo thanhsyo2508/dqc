@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createInternalDocument, createQrPayload, markDocumentUploaded, markQrPrinted, restoreInternalDocuments, serializeInternalDocuments } from "../src/domain/document-store.js";
 import { parseProductPaste } from "../src/domain/paste-excel.js";
 import { evaluateMeasurementRow, createUniqueQcRecordId, productKey, type ProductQc } from "../src/domain/product-qc.js";
@@ -150,6 +150,22 @@ describe("product QC PDF pipeline", () => {
     expect(first).toMatch(/^QC-\d{13}-\d{6}$/);
     expect(second).toMatch(/^QC-\d{13}-\d{6}$/);
     expect(first).not.toBe(second);
+  });
+
+  it("skips QC record ids that already exist in the document library", () => {
+    const timestamp = 1_700_000_000_000;
+    const now = vi.spyOn(Date, "now").mockReturnValue(timestamp);
+    const random = vi.spyOn(globalThis.crypto, "getRandomValues").mockImplementation((array) => {
+      (array as Uint32Array)[0] = 123_456;
+      return array;
+    });
+    try {
+      const reserved = `QC-${timestamp}-123456`;
+      expect(createUniqueQcRecordId([reserved])).toBe(`QC-${timestamp + 1}-123456`);
+    } finally {
+      random.mockRestore();
+      now.mockRestore();
+    }
   });
 
   it("persists successful upload metadata in the product document library", () => {

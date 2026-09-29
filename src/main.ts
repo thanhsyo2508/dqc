@@ -2,7 +2,7 @@ import { PDFDocument } from "pdf-lib";
 import "./styles.css";
 import { createInternalDocument, documentStatusLabel, markDocumentUploaded, markQrPrinted, restoreInternalDocuments, serializeInternalDocuments, type InternalDocument, type UploadSuccessRecord } from "./domain/document-store.js";
 import { parseProductPaste } from "./domain/paste-excel.js";
-import { createEmptyMeasurementStandard, evaluateMeasurementRow, productKey, type MeasurementStandard, type Product, type ProductQc } from "./domain/product-qc.js";
+import { createEmptyMeasurementStandard, createUniqueQcRecordId, evaluateMeasurementRow, productKey, type MeasurementStandard, type Product, type ProductQc } from "./domain/product-qc.js";
 import { mergeProductPdf } from "./pdf/merge.js";
 import { createQcSheetPdf } from "./pdf/qc-sheet.js";
 import { loadVietnameseFont } from "./pdf/vietnamese-font.js";
@@ -113,7 +113,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
             <section class="panel">
               <div class="panel-heading"><div class="panel-icon green">${icon("clipboard")}</div><div><h2>Thông tin kiểm tra</h2><p>Kết quả kiểm tra và thông tin người thực hiện</p></div></div>
               <div class="form-grid">
-                ${input("recordId", "Mã hồ sơ QC *", "QC-TEST-0001")}
+                ${recordIdInput()}
                 ${input("inspectionDate", "Ngày kiểm tra", today(), "date")}
                 ${input("inspector", "Người kiểm tra *", "")}
                 ${input("inspectionLevel", "Cấp độ kiểm tra", "H:100% check")}
@@ -199,6 +199,10 @@ function input(id: string, label: string, initialValue: string, type = "text"): 
   return `<label class="field">${label}<input id="${id}" type="${type}" value="${initialValue}"${required ? " required aria-required=\"true\"" : ""} aria-describedby="${id}Error" /><small id="${id}Error" class="field-error"></small></label>`;
 }
 
+function recordIdInput(): string {
+  return `<label class="field record-id-field">Mã hồ sơ QC *<span class="field-with-action"><input id="recordId" type="text" readonly required aria-required="true" aria-describedby="recordIdHint recordIdError" /><button id="refreshRecordId" class="field-action-button" type="button" title="Tạo mã hồ sơ QC mới" aria-label="Tạo mã hồ sơ QC mới">${icon("refresh")}<span>Mã mới</span></button></span><small id="recordIdHint" class="field-hint">Mã tự động gồm timestamp mili-giây và 6 số ngẫu nhiên.</small><small id="recordIdError" class="field-error"></small></label>`;
+}
+
 function measurementStandardRow(): string {
   const criteria = [1, 2, 3, 4, 5, 6, 7].map((column) => `
     <label class="measurement-field measurement-standard-field">
@@ -222,6 +226,11 @@ function today(): string {
 
 function value(id: string): string {
   return (document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${id}`)?.value ?? "").trim();
+}
+
+function nextAvailableQcRecordId(): string {
+  const reservedIds = [...documents, ...uploadedDocuments].map((document) => document.qc.recordId).filter(Boolean);
+  return createUniqueQcRecordId(reservedIds);
 }
 
 function readMeasurementStandardFromForm(): MeasurementStandard {
@@ -898,6 +907,15 @@ document.querySelector<HTMLDivElement>("#uploadedLibrary")!.addEventListener("cl
 });
 
 document.querySelector<HTMLInputElement>("#inspector")!.addEventListener("blur", () => rememberInspector());
+document.querySelector<HTMLButtonElement>("#refreshRecordId")!.addEventListener("click", () => {
+  const nextRecordId = nextAvailableQcRecordId();
+  setField("recordId", nextRecordId);
+  setFieldError("recordId", "");
+  markActiveDocumentDirty();
+  persistActiveDocument();
+  renderWorkflowState();
+  setMessage(`Đã tạo mã hồ sơ QC mới: ${nextRecordId}`, "success");
+});
 window.addEventListener("digital-qc:upload-success", (event) => {
   const detail = (event as CustomEvent<UploadSuccessRecord & Record<string, unknown>>).detail;
   if (detail) registerUploadSuccess(normalizeUploadSuccess(detail));

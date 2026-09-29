@@ -114,13 +114,14 @@ function randomDigits(length: number): string {
  * numeric entropy. The in-memory collision guard also protects records
  * generated during the same millisecond in one app session.
  */
-export function createUniqueQcRecordId(): string {
+export function createUniqueQcRecordId(reservedIds: Iterable<string> = []): string {
+  const reserved = new Set(Array.from(reservedIds, (value) => String(value).trim().toUpperCase()).filter(Boolean));
   let timestamp = Date.now();
   let candidate = "";
   do {
     candidate = `QC-${timestamp}-${randomDigits(6)}`;
-    if (issuedQcRecordIds.has(candidate)) timestamp += 1;
-  } while (issuedQcRecordIds.has(candidate));
+    if (issuedQcRecordIds.has(candidate) || reserved.has(candidate)) timestamp += 1;
+  } while (issuedQcRecordIds.has(candidate) || reserved.has(candidate));
   issuedQcRecordIds.add(candidate);
   return candidate;
 }
