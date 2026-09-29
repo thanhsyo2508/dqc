@@ -66,7 +66,7 @@ describe("product QC PDF pipeline", () => {
     const pdfBytes = await createQcSheetPdf({
       ...sampleQc,
       defectContent: "Không có lỗi ngoại quan; nội dung dài để kiểm tra khả năng cắt gọn trong ô PDF.",
-      measurements: Array.from({ length: 32 }, (_, index) => ({
+      measurements: Array.from({ length: 50 }, (_, index) => ({
         no: index + 1,
         values: ["369.5", "502.5", "20.2", "OK", "OK", "OK", "OK"],
         visualResult: index % 2 === 0 ? "OK" : "NG",
@@ -74,7 +74,7 @@ describe("product QC PDF pipeline", () => {
     }, { fontBytes, fallbackFontBytes });
 
     const reopened = await PDFDocument.load(pdfBytes);
-    expect(reopened.getPageCount()).toBeGreaterThan(1);
+    expect(reopened.getPageCount()).toBe(2);
     expect(pdfBytes.byteLength).toBeGreaterThan(5_000);
     if (process.env.PDF_QA_OUTPUT) {
       await mkdir("tmp/pdfs", { recursive: true });

@@ -836,16 +836,53 @@ document.querySelector<HTMLDivElement>("#measurementRows")!.addEventListener("cl
 
 const drawingInput = document.querySelector<HTMLInputElement>("#drawingPdf")!;
 const drawingDropzone = document.querySelector<HTMLLabelElement>("#drawingDropzone")!;
+let drawingDragDepth = 0;
+
+function hasDraggedFiles(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes("Files");
+}
+
 drawingInput.addEventListener("change", () => {
   addDrawingFiles(Array.from(drawingInput.files ?? []));
   drawingInput.value = "";
 });
-drawingDropzone.addEventListener("dragover", (event) => { event.preventDefault(); drawingDropzone.classList.add("drag-over"); });
-drawingDropzone.addEventListener("dragleave", () => drawingDropzone.classList.remove("drag-over"));
+drawingDropzone.addEventListener("dragenter", (event) => {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  drawingDragDepth += 1;
+  drawingDropzone.classList.add("drag-over");
+});
+drawingDropzone.addEventListener("dragover", (event) => {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  drawingDropzone.classList.add("drag-over");
+});
+drawingDropzone.addEventListener("dragleave", (event) => {
+  event.preventDefault();
+  drawingDragDepth = Math.max(0, drawingDragDepth - 1);
+  if (drawingDragDepth === 0) drawingDropzone.classList.remove("drag-over");
+});
 drawingDropzone.addEventListener("drop", (event) => {
   event.preventDefault();
+  event.stopPropagation();
+  drawingDragDepth = 0;
   drawingDropzone.classList.remove("drag-over");
-  addDrawingFiles(Array.from(event.dataTransfer?.files ?? []));
+  const files = Array.from(event.dataTransfer?.files ?? []);
+  if (files.length === 0) {
+    setMessage("Không đọc được file vừa thả. Hãy thử kéo file PDF trực tiếp từ File Explorer.", "error");
+    return;
+  }
+  addDrawingFiles(files);
+});
+window.addEventListener("dragover", (event) => {
+  if (hasDraggedFiles(event)) event.preventDefault();
+});
+window.addEventListener("drop", (event) => {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  drawingDragDepth = 0;
+  drawingDropzone.classList.remove("drag-over");
 });
 document.querySelector<HTMLDivElement>("#drawingList")!.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-drawing-index]");
