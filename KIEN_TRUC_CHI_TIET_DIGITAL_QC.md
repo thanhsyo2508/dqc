@@ -422,14 +422,14 @@ Trạng thái thực tế: `pending` → `sending` → (`pending` khi lỗi retr
 - Có thể xử lý nhiều sản phẩm tuần tự; mỗi sản phẩm có preview, upload, outbox và trạng thái độc lập.
 
 ### 11.5 Tem và QR (`label/`)
-Mặc định QR của mỗi sản phẩm chỉ chứa **một `open_url`** trả về sau khi upload:
+QR của mỗi sản phẩm chứa JSON compact có version, gồm metadata tra cứu và `pdf_url` trả về sau khi upload:
 ```text
 https://drive.google.com/file/d/FILE_ID/view
 ```
 - Thông tin sản phẩm (mã hàng, PO, số lượng, nhà cung cấp, phiếu nhập) được in rõ trên tem; không nhồi vào QR.
 - Chỉ dựng QR từ kết quả `success: true`.
-- QR một URL giúp camera mở thẳng hồ sơ và tránh lỗi payload nhiều dòng/dấu phẩy.
-- Nếu sau này cần QR mang metadata khi offline, dùng payload có phiên bản và escaping rõ ràng; không quay lại chuỗi nhiều dòng không có schema.
+- JSON compact giúp máy quét đọc được thông tin sản phẩm ngay cả khi không mở mạng; `pdf_url` vẫn giữ đường dẫn tới hồ sơ PDF.
+- Payload dùng schema có version và escaping chuẩn; không dùng chuỗi nhiều dòng hoặc CSV không có schema.
 - Giữ các tùy chọn khổ tem/layout hiện có.
 
 ---
@@ -496,7 +496,7 @@ Khóa hàng tiêu đề, tạo bộ lọc theo `project`, `po`, `part_no`, `prod
 - Token/khóa lưu trong kho khóa hệ điều hành; không đưa vào log, không đưa vào mã nguồn.
 - Cấu hình CSP của Tauri chặt; chỉ cho webview gọi các lệnh cần thiết (capabilities v2), không cho `fetch` ra ngoài.
 - Không ghi nội dung PDF hoặc token vào file log.
-- **QR không bảo mật:** URL/file ID có thể bị nhìn thấy; chỉ hồ sơ PDF được bảo vệ bằng quyền Drive. Không đưa dữ liệu QC chi tiết vào QR.
+- **QR không bảo mật:** metadata sản phẩm và URL/file ID có thể bị nhìn thấy; chỉ hồ sơ PDF được bảo vệ bằng quyền Drive. Không đưa dữ liệu QC chi tiết ngoài các trường tra cứu đã thống nhất vào QR.
 - Cập nhật app: bật chữ ký updater, phát hành qua kênh tin cậy.
 
 ---

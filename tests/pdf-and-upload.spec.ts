@@ -3,9 +3,9 @@ import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { createInternalDocument, markDocumentUploaded, markQrPrinted, restoreInternalDocuments, serializeInternalDocuments } from "../src/domain/document-store.js";
+import { createInternalDocument, createQrPayload, markDocumentUploaded, markQrPrinted, restoreInternalDocuments, serializeInternalDocuments } from "../src/domain/document-store.js";
 import { parseProductPaste } from "../src/domain/paste-excel.js";
-import { productKey, type ProductQc } from "../src/domain/product-qc.js";
+import { createUniqueQcRecordId, productKey, type ProductQc } from "../src/domain/product-qc.js";
 import { createQcSheetPdf } from "../src/pdf/qc-sheet.js";
 import { mergeProductPdf } from "../src/pdf/merge.js";
 import { pingServer, uploadProductPdf } from "../src/api/upload-client.js";
@@ -122,6 +122,14 @@ describe("product QC PDF pipeline", () => {
     expect(restored[1].qc.inspector).toBe("Inspector B");
   });
 
+  it("generates unique QC record ids with millisecond timestamp and numeric suffix", () => {
+    const first = createUniqueQcRecordId();
+    const second = createUniqueQcRecordId();
+    expect(first).toMatch(/^QC-\d{13}-\d{6}$/);
+    expect(second).toMatch(/^QC-\d{13}-\d{6}$/);
+    expect(first).not.toBe(second);
+  });
+
   it("persists successful upload metadata in the product document library", () => {
     const document = createInternalDocument(sampleQc.product, 1);
     markDocumentUploaded(document, {
@@ -142,7 +150,19 @@ describe("product QC PDF pipeline", () => {
   it("persists the QR payload and print history with the product document", () => {
     const document = createInternalDocument(sampleQc.product, 1);
     markDocumentUploaded(document, { openUrl: "https://drive.google.com/file/d/FILE_ID/view", sentAt: "2026-09-24T10:00:00.000Z" });
-    expect(document.uploaded?.qr?.payload).toBe("https://drive.google.com/file/d/FILE_ID/view");
+    const qrPayload = JSON.parse(document.uploaded?.qr?.payload ?? "{}") as Record<string, unknown>;
+    expect(qrPayload.type).toBe("digital-qc");
+    expect(qrPayload.version).toBe(1);
+    expect(qrPayload.project).toBe(sampleQc.product.project);
+    expect(qrPayload.supplier).toBe(sampleQc.product.supplier);
+    expect(qrPayload.quantity).toBe(sampleQc.product.quantity);
+    expect(qrPayload.unit).toBe(sampleQc.product.unit);
+    expect(qrPayload.part_no).toBe(sampleQc.product.partNo);
+    expect(qrPayload.product_name).toBe(sampleQc.product.productName);
+    expect(qrPayload.slip_no).toBe(sampleQc.product.slipNo);
+    expect(qrPayload.received_date).toBe(sampleQc.product.receivedDate);
+    expect(qrPayload.po).toBe(sampleQc.product.po);
+    expect(qrPayload.pdf_url).toBe("https://drive.google.com/file/d/FILE_ID/view");
     expect(document.uploaded?.qr?.printCount).toBe(0);
 
     markQrPrinted(document, "a4-3x8", "windows-system");
@@ -150,6 +170,17 @@ describe("product QC PDF pipeline", () => {
     expect(restored.uploaded?.qr?.printCount).toBe(1);
     expect(restored.uploaded?.qr?.templateId).toBe("a4-3x8");
     expect(restored.uploaded?.qr?.printerProfileId).toBe("windows-system");
+  });
+
+  it("builds a compact JSON QR payload with product metadata and PDF URL", () => {
+    const document = createInternalDocument(sampleQc.product, 1);
+    const payload = JSON.parse(createQrPayload(document, "https://example.test/file.pdf"));
+    expect(payload).toMatchObject({
+      type: "digital-qc",
+      version: 1,
+      part_no: sampleQc.product.partNo,
+      pdf_url: "https://example.test/file.pdf",
+    });
   });
 
   it("builds a multi-copy print sheet for a selected label template", () => {

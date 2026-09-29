@@ -41,7 +41,7 @@ const sampleProduct: Product = {
 
 const restoredUploadedDocuments = restoreInternalDocuments(localStorage.getItem(UPLOADED_DOCUMENT_STORAGE_KEY)).filter((document) => Boolean(document.uploaded));
 let uploadedDocuments: InternalDocument[] = restoredUploadedDocuments;
-let documents: InternalDocument[] = uploadedDocuments.length > 0 ? [...uploadedDocuments] : [createInternalDocument(sampleProduct, 1)];
+let documents: InternalDocument[] = [createInternalDocument(sampleProduct, 1)];
 const products: Product[] = [];
 let recentInspectors: string[] = restoreRecentInspectors();
 
@@ -91,7 +91,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 <div class="import-controls"><textarea id="excelPaste" rows="2" placeholder="Copy các dòng trong Excel rồi dán vào đây (có thể gồm dòng tiêu đề)"></textarea><button id="importExcel" class="secondary" type="button">${icon("paste")} Nạp danh sách</button></div>
                 <div id="productList" class="product-list" aria-label="Danh sách sản phẩm"></div>
               </div>
-              <div class="form-grid">
+              <div class="product-entry-table">
                 ${input("project", "Mã dự án *", "AUTM260580-0")}
                 ${input("po", "PO *", "MKAC-FBT-260817")}
                 ${input("partNo", "Mã hàng *", "2410011-FR1-014")}
@@ -716,8 +716,16 @@ function renumberMeasurementRows(): void {
 }
 
 document.querySelector<HTMLDivElement>("#productList")!.addEventListener("click", (event) => {
-  const target = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-product-index]");
+  const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-product-index]");
   if (!target) return;
+  syncCurrentProduct();
+  loadProductDocument(Number(target.dataset.productIndex));
+});
+document.querySelector<HTMLDivElement>("#productList")!.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-product-index]");
+  if (!target) return;
+  event.preventDefault();
   syncCurrentProduct();
   loadProductDocument(Number(target.dataset.productIndex));
 });
@@ -743,13 +751,11 @@ document.querySelector<HTMLDivElement>("#uploadedLibrary")!.addEventListener("cl
   const documentId = target.dataset.libraryDocumentId;
   const libraryRecord = uploadedDocuments.find((record) => record.documentId === documentId);
   if (!libraryRecord) return;
-  let index = documents.findIndex((record) => record.documentId === documentId);
-  if (index < 0) {
-    documents.push(libraryRecord);
-    index = documents.length - 1;
-    renderProductList();
+  if (libraryRecord.uploaded?.openUrl) {
+    window.open(libraryRecord.uploaded.openUrl, "_blank", "noopener,noreferrer");
+    return;
   }
-  loadProductDocument(index);
+  setMessage("Hồ sơ đã gửi không có đường dẫn PDF để mở.", "error");
 });
 
 document.querySelector<HTMLInputElement>("#inspector")!.addEventListener("blur", () => rememberInspector());

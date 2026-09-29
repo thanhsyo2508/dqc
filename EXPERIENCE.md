@@ -20,10 +20,10 @@
 ## 16. QR và in tem
 
 - QR chỉ được tạo sau khi server trả `open_url` của hồ sơ thành công; không tạo QR từ draft hoặc preview chưa upload.
-- Lưu payload URL, `printCount`, `printedAt`, `templateId` và `printerProfileId` cùng `InternalDocument.uploaded` để có thể dựng lại QR sau khi khởi động app.
+- Lưu payload JSON compact gồm metadata sản phẩm và `pdf_url`, cùng `printCount`, `printedAt`, `templateId` và `printerProfileId` trong `InternalDocument.uploaded` để có thể dựng lại QR sau khi khởi động app.
 - Profile máy in chỉ chuẩn hóa khổ giấy và CSS print sheet. Việc chọn máy in thực tế đi qua hộp thoại in Windows, tránh khóa ứng dụng vào một driver/vendor.
 - Tem roll phải dùng `@page size` đúng khổ và có `page-break-after`; nếu không, máy in nhiệt dễ tự co giãn hoặc ghép nhiều tem vào một trang.
-- Không ghi ảnh QR base64 vào local storage; chỉ lưu payload URL và metadata lịch sử in.
+- Không ghi ảnh QR base64 vào local storage; chỉ lưu payload JSON và metadata lịch sử in.
 
 ## 17. Kết nối và thư viện tài liệu
 
@@ -63,7 +63,7 @@ Tài liệu này ghi lại các bài học và quyết định cần nhớ khi p
 
 ## 4. QR và truy xuất
 
-- QR mặc định chỉ chứa một `open_url`.
+- QR dùng JSON compact có `type`/`version` và chứa metadata tra cứu sản phẩm cùng `pdf_url`.
 - Không dùng payload nhiều dòng hoặc chuỗi CSV không có escaping làm định dạng chính.
 - Thông tin mã hàng, PO, số lượng, nhà cung cấp và phiếu nhập nên in rõ trên tem, không nhồi vào QR.
 - Link PDF phải tôn trọng quyền Drive `Restricted`; QR không phải cơ chế bảo mật.

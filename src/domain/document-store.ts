@@ -1,4 +1,4 @@
-import type { Product, ProductQc } from "./product-qc.js";
+import { createUniqueQcRecordId, type Product, type ProductQc } from "./product-qc.js";
 
 export type DocumentStatus = "draft" | "preview-ready" | "sent" | "error";
 
@@ -32,6 +32,21 @@ export interface QrRecord {
   printerProfileId?: string;
 }
 
+export interface QrPayload {
+  type: "digital-qc";
+  version: 1;
+  project: string;
+  supplier: string;
+  quantity: number;
+  unit: string;
+  part_no: string;
+  product_name: string;
+  slip_no: string;
+  received_date: string;
+  po: string;
+  pdf_url: string;
+}
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -42,7 +57,7 @@ export function createInternalDocument(product: Product, sequence: number): Inte
     product,
     qc: {
       product,
-      recordId: `QC-TEST-${String(sequence).padStart(4, "0")}`,
+      recordId: createUniqueQcRecordId(),
       inspectionDate: new Date().toISOString().slice(0, 10),
       inspector: "",
       inspectionLevel: "H:100% check",
@@ -82,6 +97,25 @@ export interface UploadSuccessRecord {
   sentAt?: string;
 }
 
+export function createQrPayload(document: InternalDocument, pdfUrl: string): string {
+  const product = document.product;
+  const payload: QrPayload = {
+    type: "digital-qc",
+    version: 1,
+    project: product.project,
+    supplier: product.supplier ?? "",
+    quantity: product.quantity,
+    unit: product.unit,
+    part_no: product.partNo,
+    product_name: product.productName ?? "",
+    slip_no: product.slipNo,
+    received_date: product.receivedDate,
+    po: product.po,
+    pdf_url: pdfUrl,
+  };
+  return JSON.stringify(payload);
+}
+
 export function markDocumentUploaded(document: InternalDocument, result: UploadSuccessRecord): InternalDocument {
   document.status = "sent";
   document.statusMessage = "Upload thành công";
@@ -93,7 +127,7 @@ export function markDocumentUploaded(document: InternalDocument, result: UploadS
     downloadUrl: result.downloadUrl,
     sentAt: result.sentAt ?? now(),
     qr: result.openUrl ? {
-      payload: result.openUrl,
+      payload: createQrPayload(document, result.openUrl),
       createdAt: now(),
       printCount: document.uploaded?.qr?.printCount ?? 0,
       printedAt: document.uploaded?.qr?.printedAt,
@@ -131,7 +165,7 @@ export function restoreInternalDocuments(raw: string | null): InternalDocument[]
         ...document,
         uploaded: document.uploaded ? {
           ...document.uploaded,
-          qr: document.uploaded.qr ? { ...document.uploaded.qr, printCount: Number.isFinite(document.uploaded.qr.printCount) ? document.uploaded.qr.printCount : 0 } : (document.uploaded.openUrl ? { payload: document.uploaded.openUrl, createdAt: document.uploaded.sentAt, printCount: 0 } : undefined),
+          qr: document.uploaded.qr ? { ...document.uploaded.qr, printCount: Number.isFinite(document.uploaded.qr.printCount) ? document.uploaded.qr.printCount : 0 } : (document.uploaded.openUrl ? { payload: createQrPayload({ ...document, uploaded: { ...document.uploaded, openUrl: document.uploaded.openUrl } }, document.uploaded.openUrl), createdAt: document.uploaded.sentAt, printCount: 0 } : undefined),
         } : undefined,
         drawingNames: Array.isArray(document.drawingNames) ? document.drawingNames : [],
         status: document.status === "preview-ready" ? "draft" : document.status,
