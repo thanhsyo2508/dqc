@@ -8,7 +8,7 @@ import { createQcSheetPdf } from "./pdf/qc-sheet.js";
 import { loadVietnameseFont } from "./pdf/vietnamese-font.js";
 import { pingServer, uploadProductPdf } from "./api/upload-client.js";
 import { listQueuedPdfs, retryQueuedPdfs } from "./api/tauri-bridge.js";
-import { createQrDataUrl, getLabelTemplate, getPrinterProfile, LABEL_TEMPLATES, PRINTER_PROFILES, printSheetHtml } from "./print/label-print.js";
+import { createQrDataUrl, getLabelTemplate, getPrinterProfile, labelMarkup, LABEL_TEMPLATES, PRINTER_PROFILES, printSheetHtml } from "./print/label-print.js";
 
 let previewUrl: string | undefined;
 let previewBytes: Uint8Array | undefined;
@@ -875,7 +875,8 @@ async function renderLabelPreview(): Promise<void> {
   preview.innerHTML = `<div class="label-preview-loading">Đang dựng preview QR…</div>`;
   const qrDataUrl = await createQrDataUrl(current.uploaded.qr.payload, 320);
   if (renderKey !== `${printingDocumentId}:${templateSelect.value}:${profileSelect.value}`) return;
-  preview.innerHTML = `<div class="label-preview-sheet"><article class="label-preview-card"><img src="${qrDataUrl}" alt="QR ${escapeHtml(current.product.partNo)}"/><div><strong>${escapeHtml(current.product.partNo)}</strong><span>${escapeHtml(current.product.productName ?? "")}</span><span>QC: ${escapeHtml(current.uploaded.qcNo ?? current.qc.recordId)}</span><span>PO: ${escapeHtml(current.product.po)}</span><small>Quét để mở hồ sơ QC</small></div></article><small class="label-preview-note">Preview minh họa · kích thước thật theo profile khi mở hộp thoại in</small></div>`;
+  const qrPercent = `${(template.qrSizeMm / template.labelWidthMm) * 100}%`;
+  preview.innerHTML = `<div class="label-preview-sheet"><div class="label-preview-real" style="--preview-qr-width:${qrPercent}; aspect-ratio:${template.labelWidthMm} / ${template.labelHeightMm};">${labelMarkup(current, template, qrDataUrl)}</div><small class="label-preview-note">Preview đúng tỷ lệ ${template.labelWidthMm} × ${template.labelHeightMm} mm · nội dung sẽ được cắt gọn nếu vượt chiều rộng tem</small></div>`;
 }
 
 function openLabelPrint(documentId: string): void {
