@@ -17,6 +17,7 @@ Màn hình tạo hồ sơ vẫn giữ nguyên nguyên tắc một sản phẩm �
 - QR được lưu cùng hồ sơ upload dưới dạng JSON compact gồm mã dự án, NCC, số lượng, đơn vị tính, mã hàng, tên hàng, phiếu nhập, ngày nhập kho, PO và `pdf_url`, kèm số lần in, thời điểm in, mẫu tem và profile máy in; có thể mở lại từ Document Library.
 - Form `In tem QR` hỗ trợ mẫu A4, Zebra/Godex 100×50 mm, Brother 62×29 mm và máy in văn phòng generic; hộp thoại in Windows vẫn là nơi chọn thiết bị thực tế.
 - Có nút `Kiểm tra kết nối` gửi `ping` tới Web App, hiển thị trạng thái loading/thành công/lỗi trước khi upload.
+- Workspace được khóa cho tới khi đăng nhập Google bằng trình duyệt hệ thống; refresh token được giữ trong Windows Credential Manager và mọi upload đều bắt buộc xác thực.
 - Document Library có tìm kiếm theo mã hàng, PO, mã QC hoặc document ID để không phải cuộn danh sách dài.
 - Validation hiển thị ngay cạnh trường lỗi; bảng đo responsive và có nhãn cột rõ trên mobile.
 - Giao diện mở rộng theo màn hình, ưu tiên hiển thị form và preview trong cùng một workspace.
@@ -48,7 +49,7 @@ Test hiện có:
 
 UI hiện có form product-centric, dán nhiều sản phẩm từ Excel, nhiều dòng đo, nhiều PDF bản vẽ, tạo PDF phiếu QC, ghép bản vẽ, preview, tải PDF, thư viện tài liệu local và upload theo từng card. Khi chạy Tauri, PDF được ghi vào Rust Outbox trước khi gửi; lỗi mạng được giữ lại và tự retry khi mở app hoặc có mạng trở lại.
 
-Đã bổ sung Apps Script tại `apps-script/` và HTTP Outbox Rust tại `src-tauri/src/outbox.rs`. Apps Script hiện là môi trường test; production vẫn cần OAuth Client ID, allowlist tài khoản QC và cấp quyền Drive/Sheet thật.
+Đã bổ sung Apps Script tại `apps-script/`, HTTP Outbox Rust và OAuth PKCE tại `src-tauri/src/`. Backend hỗ trợ `ALLOWED_USERS` theo vai trò, rate limit/quota ngày và Shared Drive Restricted. Để đưa lên production, quản trị viên vẫn cần tạo OAuth Client ID, Shared Drive và cấp quyền Google Workspace thật theo `apps-script/SETUP.md`.
 
 Giao diện hiện dùng design system tại `design-system/digital-qc/MASTER.md`: phong cách Minimalism/Swiss, màu navy–blue–green, trạng thái tác nghiệp rõ và responsive cho màn hình nhỏ.
 
@@ -64,7 +65,7 @@ Khung Tauri:
 npm run tauri dev
 ```
 
-Lưu ý: cần chọn ít nhất một file PDF bản vẽ trong UI để tạo preview hoàn chỉnh. Font Noto Sans Vietnamese đã được nhúng khi tạo phiếu QC; kiểm tra máy in thực tế và bật OAuth production vẫn là bước nghiệm thu.
+Lưu ý: cần chọn ít nhất một file PDF bản vẽ trong UI để tạo preview hoàn chỉnh. Font Noto Sans Vietnamese đã được nhúng khi tạo phiếu QC; OAuth/Shared Drive cần được cấu hình bằng tài khoản tổ chức và kiểm tra máy in thực tế trước khi nghiệm thu.
 
 ## Tài liệu dự án
 

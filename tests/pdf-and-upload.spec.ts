@@ -5,7 +5,7 @@ import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { createInternalDocument, createQrPayload, markDocumentUploaded, markQrPrinted, restoreInternalDocuments, serializeInternalDocuments } from "../src/domain/document-store.js";
 import { parseProductPaste } from "../src/domain/paste-excel.js";
-import { createUniqueQcRecordId, productKey, type ProductQc } from "../src/domain/product-qc.js";
+import { evaluateMeasurementRow, createUniqueQcRecordId, productKey, type ProductQc } from "../src/domain/product-qc.js";
 import { createQcSheetPdf } from "../src/pdf/qc-sheet.js";
 import { mergeProductPdf } from "../src/pdf/merge.js";
 import { pingServer, uploadProductPdf } from "../src/api/upload-client.js";
@@ -17,6 +17,15 @@ const sampleQc: ProductQc = {
   inspector: "Test Inspector",
   inspectionLevel: "H:100% check",
   defectQuantity: 0,
+  measurementStandard: {
+    values: [
+      { target: 369.5, minusTolerance: 0.5, plusTolerance: 0.5 },
+      { target: 502.5, minusTolerance: 0.3, plusTolerance: 0.7 },
+      { target: 20.2, minusTolerance: 0.2, plusTolerance: 0.2 },
+      ...Array.from({ length: 4 }, () => ({ target: "", minusTolerance: "", plusTolerance: "" })),
+    ],
+    visualResult: "OK",
+  },
   measurements: [{ no: 1, values: [369.5, 502.5, 20.2], visualResult: "OK" }],
   product: {
     project: "AUTM260580-0",
@@ -46,6 +55,19 @@ async function readJson(req: IncomingMessage): Promise<any> {
 }
 
 describe("product QC PDF pipeline", () => {
+  it("evaluates measurement samples against per-cell asymmetric tolerances", () => {
+    const passing = evaluateMeasurementRow({ no: 1, values: [369, 503.2, 20], visualResult: "OK" }, sampleQc.measurementStandard);
+    const failing = evaluateMeasurementRow({ no: 2, values: [368.9, 503.3, 20.2], visualResult: "NG" }, sampleQc.measurementStandard);
+    const pending = evaluateMeasurementRow({ no: 3, values: ["", 502.5, 20.2], visualResult: "OK" }, sampleQc.measurementStandard);
+
+    expect(passing.status).toBe("pass");
+    expect(passing.cells.slice(0, 3)).toEqual(["pass", "pass", "pass"]);
+    expect(failing.status).toBe("fail");
+    expect(failing.cells[0]).toBe("fail");
+    expect(failing.visual).toBe("fail");
+    expect(pending.status).toBe("pending");
+  });
+
   it("creates a valid QC PDF for one product", async () => {
     const bytes = await createQcSheetPdf(sampleQc);
     expect(Buffer.from(bytes).subarray(0, 5).toString()).toBe("%PDF-");
@@ -200,19 +222,20 @@ describe("product QC PDF pipeline", () => {
   it("pings the configured Apps Script endpoint", async () => {
     let request: any;
     let contentType: string | undefined;
-    const result = await pingServer("https://example.test/exec", async (_input, init) => {
+    const result = await pingServer("https://script.google.com/macros/s/test-deployment/exec", "test-id-token", async (_input, init) => {
       request = JSON.parse(String(init?.body));
       contentType = new Headers(init?.headers).get("content-type") ?? undefined;
       return new Response(JSON.stringify({ success: true, api_version: 1, user: "qc@example.com", allowed: true }), { headers: { "content-type": "application/json" } });
     });
     expect(request.action).toBe("ping");
     expect(request.api_version).toBe(1);
+    expect(request.auth.id_token).toBe("test-id-token");
     expect(contentType).toBe("text/plain;charset=UTF-8");
     expect(result.user).toBe("qc@example.com");
   });
 
   it("explains an HTML/404 response instead of exposing a JSON parse error", async () => {
-    await expect(pingServer("https://example.test/not-an-exec", async () => new Response("<html>Not found</html>", { status: 404 })))
+    await expect(pingServer("https://script.google.com/macros/s/test-deployment/exec", "test-id-token", async () => new Response("<html>Not found</html>", { status: 404 })))
       .rejects.toThrow("response không phải JSON");
   });
 
@@ -241,11 +264,14 @@ describe("product QC PDF pipeline", () => {
         endpoint: `http://127.0.0.1:${address.port}/exec`,
         requestId: "request-test-0001",
         productKey: productKey(sampleQc.product),
+        idToken: "test-id-token",
       });
 
       expect(result.success).toBe(true);
       expect(received.action).toBe("upload_qc_pdf");
+      expect(received.auth.id_token).toBe("test-id-token");
       expect(received.data.request_id).toBe("request-test-0001");
+      expect(received.data.qc_record_id).toBe(sampleQc.recordId);
       expect(received.data.part_no).toBe(sampleQc.product.partNo);
       expect(received.data.page_count).toBe(3);
       expect(Buffer.from(received.data.pdf_base64, "base64").equals(Buffer.from(pdfBytes))).toBe(true);
@@ -266,10 +292,11 @@ describe("product QC PDF pipeline", () => {
     try {
       const pdfBytes = await createQcSheetPdf(sampleQc);
       await uploadProductPdf(pdfBytes, sampleQc, {
-        endpoint: "https://example.test/exec",
+        endpoint: "https://script.google.com/macros/s/test-deployment/exec",
         requestId: "request-correlated-0001",
         documentId: "DOC-2410011-FR1-014",
         productKey: productKey(sampleQc.product),
+        idToken: "test-id-token",
         fetchImpl: async () => new Response(JSON.stringify({ success: true, api_version: 1, qc_no: "QC-0001" }), { headers: { "content-type": "application/json" } }),
       });
       expect(detail.documentId).toBe("DOC-2410011-FR1-014");

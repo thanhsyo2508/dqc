@@ -2,12 +2,12 @@ import { PDFDocument } from "pdf-lib";
 import "./styles.css";
 import { createInternalDocument, documentStatusLabel, markDocumentUploaded, markQrPrinted, restoreInternalDocuments, serializeInternalDocuments, type InternalDocument, type UploadSuccessRecord } from "./domain/document-store.js";
 import { parseProductPaste } from "./domain/paste-excel.js";
-import { productKey, type Product, type ProductQc } from "./domain/product-qc.js";
+import { createEmptyMeasurementStandard, evaluateMeasurementRow, productKey, type MeasurementStandard, type Product, type ProductQc } from "./domain/product-qc.js";
 import { mergeProductPdf } from "./pdf/merge.js";
 import { createQcSheetPdf } from "./pdf/qc-sheet.js";
 import { loadVietnameseFont } from "./pdf/vietnamese-font.js";
 import { pingServer, uploadProductPdf } from "./api/upload-client.js";
-import { listQueuedPdfs, retryQueuedPdfs } from "./api/tauri-bridge.js";
+import { isTauriRuntime, listQueuedPdfs, loginWithGoogle, logoutGoogle, restoreGoogleSession, retryQueuedPdfs, type AuthSession } from "./api/tauri-bridge.js";
 import { createQrDataUrl, getLabelTemplate, getPrinterProfile, labelMarkup, LABEL_TEMPLATES, PRINTER_PROFILES, printSheetHtml } from "./print/label-print.js";
 
 let previewUrl: string | undefined;
@@ -22,8 +22,12 @@ const RECENT_INSPECTORS_STORAGE_KEY = "digital-qc.recent-inspectors.v1";
 const API_ENDPOINT_STORAGE_KEY = "digital-qc.api-endpoint.v1";
 const LABEL_TEMPLATE_STORAGE_KEY = "digital-qc.label-template.v1";
 const PRINTER_PROFILE_STORAGE_KEY = "digital-qc.printer-profile.v1";
+const GOOGLE_OAUTH_CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID?.trim() ?? "";
+const GOOGLE_OAUTH_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_SECRET?.trim() ?? "";
 let isGeneratingPreview = false;
 let isUploading = false;
+let isAuthenticating = false;
+let authSession: AuthSession | null = null;
 let printingDocumentId: string | undefined;
 
 const sampleProduct: Product = {
@@ -53,6 +57,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         <div><strong>Digital QC</strong><span>Quality workspace</span></div>
       </div>
       <div class="topbar-actions">
+        <button id="authAccount" class="auth-account" type="button" title="Đăng xuất Google" hidden><span id="authAvatar" class="auth-avatar">G</span><span><strong id="authName">Google</strong><small id="authEmail"></small></span><span class="auth-signout">Đăng xuất</span></button>
         <button id="serverStatus" class="connection-pill" type="button" aria-haspopup="dialog" aria-label="Cấu hình server upload"><i></i><span id="serverStatusText">Chưa cấu hình server</span></button>
         <button class="icon-button" type="button" aria-label="Mở hướng dẫn">${icon("help")}</button>
       </div>
@@ -116,8 +121,10 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 ${input("responseDueDate", "Thời hạn phản hồi", "", "date")}
               </div>
               <label class="field full-field">Nội dung lỗi<textarea id="defectContent" rows="2" placeholder="Không có lỗi hoặc mô tả lỗi"></textarea></label>
-              <div class="measurements"><div class="subsection-heading"><div><h3>Kết quả đo</h3><span>Thêm một dòng cho mỗi mẫu đo</span></div><button id="addMeasurementRow" class="tertiary" type="button">${icon("plus")} Thêm dòng đo</button></div>
-                <div class="measurement-scroll"><div class="measurement-table-head"><span>Mẫu</span><span>V1</span><span>V2</span><span>V3</span><span>V4</span><span>V5</span><span>V6</span><span>V7</span><span>Ngoại quan</span><span></span></div>
+              <div class="measurements"><div class="subsection-heading"><div><h3>Kết quả đo</h3><span>Nhập chuẩn và sai số để tự động đánh giá từng mẫu</span></div><button id="addMeasurementRow" class="tertiary" type="button">${icon("plus")} Thêm dòng đo</button></div>
+                <div class="measurement-legend"><span><i class="legend-dot pass"></i>Đạt</span><span><i class="legend-dot fail"></i>Không đạt</span><span><i class="legend-dot pending"></i>Chưa đủ dữ liệu</span></div>
+                <div class="measurement-scroll"><div class="measurement-table-head"><span>Mẫu</span><span>V1</span><span>V2</span><span>V3</span><span>V4</span><span>V5</span><span>V6</span><span>V7</span><span>Ngoại quan</span><span>Đánh giá</span><span></span></div>
+                <div id="measurementStandard">${measurementStandardRow()}</div>
                 <div id="measurementRows">${measurementRow(1)}</div></div>
               </div>
             </section>
@@ -140,6 +147,17 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           </aside>
         </div>
       </main>
+    </div>
+    <div id="authGate" class="auth-gate" role="dialog" aria-modal="true" aria-labelledby="authGateTitle">
+      <div class="auth-card">
+        <span class="auth-logo">DQ</span>
+        <span class="eyebrow">SECURE ACCESS</span>
+        <h1 id="authGateTitle">Đăng nhập Digital QC</h1>
+        <p>Đăng nhập bằng tài khoản Google đã được cấp quyền để tạo và gửi hồ sơ lên kho tài liệu.</p>
+        <button id="googleSignIn" class="google-sign-in" type="button"><span>G</span> Đăng nhập bằng Google</button>
+        <small id="authMessage" class="auth-message" role="status" aria-live="polite">Đang kiểm tra phiên đăng nhập…</small>
+        <div class="auth-security-note">Ứng dụng không nhận mật khẩu Google. Trang đăng nhập được mở bằng trình duyệt hệ thống.</div>
+      </div>
     </div>
   </div>
 `;
@@ -181,8 +199,21 @@ function input(id: string, label: string, initialValue: string, type = "text"): 
   return `<label class="field">${label}<input id="${id}" type="${type}" value="${initialValue}"${required ? " required aria-required=\"true\"" : ""} aria-describedby="${id}Error" /><small id="${id}Error" class="field-error"></small></label>`;
 }
 
+function measurementStandardRow(): string {
+  const criteria = [1, 2, 3, 4, 5, 6, 7].map((column) => `
+    <label class="measurement-field measurement-standard-field">
+      <span class="measurement-field-label">V${column}</span>
+      <input class="standard-target" data-column="${column}" inputmode="decimal" aria-label="Thông số chuẩn V${column}" placeholder="0" />
+      <span class="tolerance-inputs">
+        <input class="standard-minus" data-column="${column}" inputmode="decimal" aria-label="Sai số âm V${column}" placeholder="−" title="Sai số âm" />
+        <input class="standard-plus" data-column="${column}" inputmode="decimal" aria-label="Sai số dương V${column}" placeholder="+" title="Sai số dương" />
+      </span>
+    </label>`).join("");
+  return `<div class="measurement-row measurement-standard-row"><span class="row-label"><strong>Thông số chuẩn</strong><small>Danh nghĩa · −/+ sai số</small></span>${criteria}<label class="measurement-field"><span class="measurement-field-label">Ngoại quan chuẩn</span><select class="standard-visual" aria-label="Ngoại quan chuẩn"><option value="">Không áp dụng</option><option value="OK">OK</option><option value="NG">NG</option></select></label><span class="measurement-result is-standard">Tự động</span><span class="measurement-action-spacer" aria-hidden="true"></span></div>`;
+}
+
 function measurementRow(no: number): string {
-  return `<div class="measurement-row" data-row="${no}"><span class="row-label">Mẫu ${String(no).padStart(2, "0")}</span>${[1, 2, 3, 4, 5, 6, 7].map((column) => `<label class="measurement-field"><span class="measurement-field-label">V${column}</span><input class="measure-value" data-column="${column}" aria-label="Mẫu ${no}, vị trí ${column}" placeholder="${column}" /></label>`).join("")}<label class="measurement-field"><span class="measurement-field-label">Ngoại quan</span><select class="measure-visual" aria-label="Mẫu ${no}, ngoại quan"><option value="">Chọn</option><option value="OK">OK</option><option value="NG">NG</option></select></label><button class="remove-measurement" type="button" data-row="${no}" aria-label="Xóa mẫu ${no}">${icon("trash")}</button></div>`;
+  return `<div class="measurement-row" data-row="${no}"><span class="row-label">Mẫu ${String(no).padStart(2, "0")}</span>${[1, 2, 3, 4, 5, 6, 7].map((column) => `<label class="measurement-field"><span class="measurement-field-label">V${column}</span><input class="measure-value" data-column="${column}" inputmode="decimal" aria-label="Mẫu ${no}, vị trí ${column}" placeholder="—" /></label>`).join("")}<label class="measurement-field"><span class="measurement-field-label">Ngoại quan</span><select class="measure-visual" aria-label="Mẫu ${no}, ngoại quan"><option value="">Chọn</option><option value="OK">OK</option><option value="NG">NG</option></select></label><span class="measurement-result is-pending" aria-live="polite">CHƯA ĐỦ</span><button class="remove-measurement" type="button" data-row="${no}" aria-label="Xóa mẫu ${no}">${icon("trash")}</button></div>`;
 }
 
 function today(): string {
@@ -191,6 +222,46 @@ function today(): string {
 
 function value(id: string): string {
   return (document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${id}`)?.value ?? "").trim();
+}
+
+function readMeasurementStandardFromForm(): MeasurementStandard {
+  const root = document.querySelector<HTMLDivElement>("#measurementStandard");
+  if (!root) return createEmptyMeasurementStandard();
+  return {
+    values: [1, 2, 3, 4, 5, 6, 7].map((column) => ({
+      target: root.querySelector<HTMLInputElement>(`.standard-target[data-column="${column}"]`)?.value.trim() ?? "",
+      minusTolerance: root.querySelector<HTMLInputElement>(`.standard-minus[data-column="${column}"]`)?.value.trim() ?? "",
+      plusTolerance: root.querySelector<HTMLInputElement>(`.standard-plus[data-column="${column}"]`)?.value.trim() ?? "",
+    })),
+    visualResult: root.querySelector<HTMLSelectElement>(".standard-visual")?.value.trim() ?? "",
+  };
+}
+
+function readMeasurementRowsFromForm(): ProductQc["measurements"] {
+  return [...document.querySelectorAll<HTMLDivElement>("#measurementRows .measurement-row")].map((row, index) => ({
+    no: index + 1,
+    values: [...row.querySelectorAll<HTMLInputElement>(".measure-value")].map((field) => field.value.trim()),
+    visualResult: row.querySelector<HTMLSelectElement>(".measure-visual")?.value.trim(),
+  }));
+}
+
+function updateMeasurementAssessments(): void {
+  const standard = readMeasurementStandardFromForm();
+  const rows = readMeasurementRowsFromForm();
+  document.querySelectorAll<HTMLDivElement>("#measurementRows .measurement-row").forEach((element, rowIndex) => {
+    const assessment = evaluateMeasurementRow(rows[rowIndex], standard);
+    element.querySelectorAll<HTMLElement>(".measurement-field").forEach((field) => field.classList.remove("is-pass", "is-fail", "is-pending"));
+    assessment.cells.forEach((status, columnIndex) => {
+      if (status === "not-configured") return;
+      element.querySelector<HTMLInputElement>(`.measure-value[data-column="${columnIndex + 1}"]`)?.closest<HTMLElement>(".measurement-field")?.classList.add(`is-${status}`);
+    });
+    if (assessment.visual !== "not-configured") element.querySelector<HTMLElement>(".measure-visual")?.closest<HTMLElement>(".measurement-field")?.classList.add(`is-${assessment.visual}`);
+    const result = element.querySelector<HTMLElement>(".measurement-result");
+    if (result) {
+      result.className = `measurement-result is-${assessment.status}`;
+      result.textContent = assessment.status === "pass" ? "ĐẠT" : assessment.status === "fail" ? "KHÔNG ĐẠT" : "CHƯA ĐỦ";
+    }
+  });
 }
 
 function setField(id: string, fieldValue: string | number): void {
@@ -256,6 +327,61 @@ function renderServerStatus(state: "not-configured" | "configured" | "checking" 
   button.className = `connection-pill is-${state}`;
 }
 
+function renderAuthState(message = "Đăng nhập để tiếp tục."): void {
+  const gate = document.querySelector<HTMLDivElement>("#authGate");
+  const account = document.querySelector<HTMLButtonElement>("#authAccount");
+  const signIn = document.querySelector<HTMLButtonElement>("#googleSignIn");
+  const authMessage = document.querySelector<HTMLElement>("#authMessage");
+  const name = document.querySelector<HTMLElement>("#authName");
+  const email = document.querySelector<HTMLElement>("#authEmail");
+  const avatar = document.querySelector<HTMLElement>("#authAvatar");
+  if (gate) gate.hidden = Boolean(authSession);
+  if (account) account.hidden = !authSession;
+  if (signIn) {
+    signIn.disabled = isAuthenticating || !GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET;
+    signIn.textContent = isAuthenticating ? "Đang mở Google…" : "G  Đăng nhập bằng Google";
+  }
+  if (authMessage) authMessage.textContent = message;
+  if (authSession) {
+    if (name) name.textContent = authSession.name || authSession.email.split("@")[0];
+    if (email) email.textContent = authSession.email;
+    if (avatar) avatar.textContent = (authSession.name || authSession.email).trim().charAt(0).toUpperCase() || "G";
+  }
+  renderPreviewActions();
+}
+
+async function requireAuthSession(): Promise<AuthSession> {
+  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET) throw new Error("Chưa cấu hình đầy đủ Google OAuth cho ứng dụng.");
+  const restored = await restoreGoogleSession(GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET);
+  if (!restored) {
+    authSession = null;
+    renderAuthState("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
+    throw new Error("Cần đăng nhập Google trước khi tiếp tục.");
+  }
+  authSession = restored;
+  renderAuthState(`Đã đăng nhập: ${restored.email}`);
+  return restored;
+}
+
+async function initializeAuthentication(): Promise<void> {
+  if (!isTauriRuntime()) {
+    renderAuthState("Đăng nhập Google chỉ hoạt động trong ứng dụng Digital QC desktop.");
+    return;
+  }
+  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET) {
+    renderAuthState("Thiếu cấu hình OAuth Client ID hoặc Client Secret. Quản trị viên cần bổ sung trước khi sử dụng.");
+    return;
+  }
+  try {
+    authSession = await restoreGoogleSession(GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET);
+    renderAuthState(authSession ? `Đã đăng nhập: ${authSession.email}` : "Đăng nhập bằng tài khoản Google được cấp quyền.");
+    if (authSession) await retryOutboxOnStartup();
+  } catch (error) {
+    authSession = null;
+    renderAuthState(error instanceof Error ? error.message : "Không khôi phục được phiên Google.");
+  }
+}
+
 function renderPreviewActions(): void {
   const hasPreview = Boolean(previewBytes);
   const current = activeDocument();
@@ -265,11 +391,11 @@ function renderPreviewActions(): void {
   const download = document.querySelector<HTMLButtonElement>("#downloadPdf");
   if (create) { create.disabled = isGeneratingPreview || isUploading; create.className = hasPreview ? "secondary" : "primary"; }
   if (upload) {
-    upload.disabled = !hasPreview || isGeneratingPreview || isUploading || alreadyUploaded;
+    upload.disabled = !hasPreview || isGeneratingPreview || isUploading || alreadyUploaded || !authSession;
     upload.className = hasPreview && !alreadyUploaded ? "primary" : "secondary";
     upload.setAttribute("aria-busy", isUploading ? "true" : "false");
     upload.innerHTML = alreadyUploaded ? `${icon("check")} Đã gửi hồ sơ` : `${icon("upload")} Gửi hồ sơ`;
-    upload.title = alreadyUploaded ? "Hồ sơ này đã gửi thành công" : "Gửi hồ sơ QC";
+    upload.title = !authSession ? "Đăng nhập Google để gửi hồ sơ" : alreadyUploaded ? "Hồ sơ này đã gửi thành công" : "Gửi hồ sơ QC";
   }
   if (download) download.disabled = !hasPreview || isGeneratingPreview;
 }
@@ -381,11 +507,8 @@ function readFormSnapshot(): ProductQc {
     defectQuantity: Number(value("defectQuantity") || 0),
     defectContent: value("defectContent"),
     responseDueDate: value("responseDueDate"),
-    measurements: [...document.querySelectorAll<HTMLDivElement>("#measurementRows .measurement-row")].map((row, index) => ({
-      no: index + 1,
-      values: [...row.querySelectorAll<HTMLInputElement>(".measure-value")].map((field) => field.value.trim()),
-      visualResult: row.querySelector<HTMLSelectElement>(".measure-visual")?.value.trim(),
-    })),
+    measurementStandard: readMeasurementStandardFromForm(),
+    measurements: readMeasurementRowsFromForm(),
     product: productFromForm(),
   };
 }
@@ -401,6 +524,23 @@ function persistActiveDocument(): void {
   drawingFilesByDocument.set(current.documentId, [...drawingFiles]);
 }
 
+function renderMeasurementStandardFromData(standard?: MeasurementStandard): void {
+  const root = document.querySelector<HTMLDivElement>("#measurementStandard");
+  if (!root) return;
+  const safeStandard = standard ?? createEmptyMeasurementStandard();
+  [1, 2, 3, 4, 5, 6, 7].forEach((column, index) => {
+    const criterion = safeStandard.values[index];
+    const target = root.querySelector<HTMLInputElement>(`.standard-target[data-column="${column}"]`);
+    const minus = root.querySelector<HTMLInputElement>(`.standard-minus[data-column="${column}"]`);
+    const plus = root.querySelector<HTMLInputElement>(`.standard-plus[data-column="${column}"]`);
+    if (target) target.value = String(criterion?.target ?? "");
+    if (minus) minus.value = String(criterion?.minusTolerance ?? "");
+    if (plus) plus.value = String(criterion?.plusTolerance ?? "");
+  });
+  const visual = root.querySelector<HTMLSelectElement>(".standard-visual");
+  if (visual) visual.value = safeStandard.visualResult ?? "";
+}
+
 function renderMeasurementRowsFromData(rows: ProductQc["measurements"]): void {
   const container = document.querySelector<HTMLDivElement>("#measurementRows")!;
   const safeRows = rows.length > 0 ? rows : [{ no: 1, values: [], visualResult: "" }];
@@ -411,6 +551,7 @@ function renderMeasurementRowsFromData(rows: ProductQc["measurements"]): void {
     const visual = element.querySelector<HTMLSelectElement>(".measure-visual");
     if (visual) visual.value = row.visualResult ?? "";
   });
+  updateMeasurementAssessments();
 }
 
 function renderProductList(): void {
@@ -560,6 +701,7 @@ function restoreDocumentForm(record: InternalDocument): void {
   setField("responseDueDate", qc.responseDueDate ?? "");
   const defectContent = globalThis.document.querySelector<HTMLTextAreaElement>("#defectContent");
   if (defectContent) defectContent.value = qc.defectContent ?? "";
+  renderMeasurementStandardFromData(qc.measurementStandard);
   renderMeasurementRowsFromData(qc.measurements);
 }
 
@@ -650,11 +792,8 @@ function readProductQc(): ProductQc {
     defectQuantity,
     defectContent: value("defectContent"),
     responseDueDate: value("responseDueDate"),
-    measurements: [...document.querySelectorAll<HTMLDivElement>("#measurementRows .measurement-row")].map((row, index) => ({
-      no: index + 1,
-      values: [...row.querySelectorAll<HTMLInputElement>(".measure-value")].map((field) => field.value.trim()),
-      visualResult: row.querySelector<HTMLSelectElement>(".measure-visual")?.value.trim(),
-    })),
+    measurementStandard: readMeasurementStandardFromForm(),
+    measurements: readMeasurementRowsFromForm(),
     product: productFromForm(),
   };
 }
@@ -823,6 +962,8 @@ document.querySelector<HTMLButtonElement>("#addMeasurementRow")!.addEventListene
   const rows = document.querySelector<HTMLDivElement>("#measurementRows")!;
   const nextNo = rows.querySelectorAll(".measurement-row").length + 1;
   rows.insertAdjacentHTML("beforeend", measurementRow(nextNo));
+  markActiveDocumentDirty();
+  updateMeasurementAssessments();
 });
 
 document.querySelector<HTMLDivElement>("#measurementRows")!.addEventListener("click", (event) => {
@@ -832,6 +973,14 @@ document.querySelector<HTMLDivElement>("#measurementRows")!.addEventListener("cl
   if (rows.length <= 1) return;
   button.closest<HTMLDivElement>(".measurement-row")?.remove();
   renumberMeasurementRows();
+  markActiveDocumentDirty();
+  updateMeasurementAssessments();
+});
+
+document.querySelector<HTMLElement>(".measurements")!.addEventListener("input", updateMeasurementAssessments);
+document.querySelector<HTMLElement>(".measurements")!.addEventListener("change", () => {
+  markActiveDocumentDirty();
+  updateMeasurementAssessments();
 });
 
 const drawingInput = document.querySelector<HTMLInputElement>("#drawingPdf")!;
@@ -953,6 +1102,38 @@ function openServerConfig(): void {
 }
 
 document.querySelector<HTMLButtonElement>("#serverStatus")!.addEventListener("click", openServerConfig);
+document.querySelector<HTMLButtonElement>("#googleSignIn")!.addEventListener("click", async () => {
+  if (isAuthenticating || !GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET) return;
+  isAuthenticating = true;
+  let authStatus = "Trình duyệt hệ thống đang mở trang đăng nhập Google…";
+  renderAuthState(authStatus);
+  try {
+    const session = await loginWithGoogle(GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET);
+    authSession = session;
+    authStatus = `Đã đăng nhập: ${session.email}`;
+    setMessage(`Đã đăng nhập Google bằng ${session.email}.`, "success");
+  } catch (error) {
+    authSession = null;
+    authStatus = error instanceof Error ? error.message : "Không đăng nhập được Google.";
+  } finally {
+    isAuthenticating = false;
+    renderAuthState(authStatus);
+  }
+
+  if (authSession) {
+    await retryOutboxOnStartup();
+  }
+});
+document.querySelector<HTMLButtonElement>("#authAccount")!.addEventListener("click", async () => {
+  if (!window.confirm("Đăng xuất tài khoản Google khỏi Digital QC?")) return;
+  try {
+    await logoutGoogle();
+  } finally {
+    authSession = null;
+    renderAuthState("Đã đăng xuất. Vui lòng đăng nhập để tiếp tục.");
+    setMessage("Đã đăng xuất khỏi Digital QC.", "info");
+  }
+});
 document.querySelector<HTMLButtonElement>("#cancelServerConfig")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#serverConfigDialog")?.close());
 document.querySelector<HTMLButtonElement>("#pingServer")!.addEventListener("click", async () => {
   const endpoint = value("serverEndpoint");
@@ -967,10 +1148,13 @@ document.querySelector<HTMLButtonElement>("#pingServer")!.addEventListener("clic
   message.textContent = "Đang gửi ping đến Web App…";
   renderServerStatus("checking");
   try {
+    await requireAuthSession();
     const result = await pingServer(endpoint);
     renderServerStatus("online");
     message.className = "dialog-message is-success";
-    message.textContent = result.user ? `Kết nối thành công · tài khoản: ${result.user}` : "Kết nối thành công · Web App đang hoạt động.";
+    message.textContent = result.user
+      ? `Kết nối thành công · ${result.user}${result.role ? ` · vai trò: ${result.role}` : ""}`
+      : "Kết nối thành công · Web App đang hoạt động.";
     setMessage("Đã kiểm tra kết nối server thành công.", "success");
   } catch (error) {
     renderServerStatus("error");
@@ -1100,6 +1284,12 @@ document.querySelector<HTMLButtonElement>("#uploadPdf")!.addEventListener("click
     openServerConfig();
     return;
   }
+  try {
+    await requireAuthSession();
+  } catch (error) {
+    setMessage(error instanceof Error ? error.message : "Cần đăng nhập Google trước khi upload.", "error");
+    return;
+  }
   let qc: ProductQc;
   try {
     syncCurrentProduct();
@@ -1158,8 +1348,8 @@ renderRecentInspectors();
 renderUploadedLibrary();
 renderServerStatus(configuredEndpoint() ? "configured" : "not-configured");
 renderPreviewActions();
-void retryOutboxOnStartup();
-window.addEventListener("online", () => { void retryOutboxOnStartup(); });
+void initializeAuthentication();
+window.addEventListener("online", () => { if (authSession) void retryOutboxOnStartup(); });
 
 window.addEventListener("beforeunload", () => {
   if (previewUrl) URL.revokeObjectURL(previewUrl);

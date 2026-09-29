@@ -1,6 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type Color, type PDFFont, type PDFPage } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import type { ProductQc } from "../domain/product-qc.js";
+import { evaluateMeasurementRow, type MeasurementAssessment, type MeasurementStandard, type ProductQc } from "../domain/product-qc.js";
 
 export interface QcSheetOptions {
   fontBytes?: Uint8Array;
@@ -107,8 +107,8 @@ function drawHeader(page: PDFPage, data: ProductQc, fonts: PdfFonts, continued =
   return PAGE_HEIGHT - 104;
 }
 
-const MEASUREMENT_COLUMNS = ["STT", "V1", "V2", "V3", "V4", "V5", "V6", "V7", "NGOẠI QUAN"];
-const MEASUREMENT_WIDTHS = [32, 52, 52, 52, 52, 52, 52, 52, 127];
+const MEASUREMENT_COLUMNS = ["STT", "V1", "V2", "V3", "V4", "V5", "V6", "V7", "NGOẠI QUAN", "ĐÁNH GIÁ"];
+const MEASUREMENT_WIDTHS = [30, 45, 45, 45, 45, 45, 45, 45, 100, 78];
 
 function drawMeasurementHeader(page: PDFPage, y: number, fonts: PdfFonts): number {
   let x = MARGIN;
@@ -123,15 +123,52 @@ function drawMeasurementHeader(page: PDFPage, y: number, fonts: PdfFonts): numbe
   return y - 21;
 }
 
-function drawMeasurementRow(page: PDFPage, values: string[], y: number, rowIndex: number, fonts: PdfFonts): number {
+function assessmentLabel(status: MeasurementAssessment["status"]): string {
+  return status === "pass" ? "ĐẠT" : status === "fail" ? "KHÔNG ĐẠT" : "CHƯA ĐỦ";
+}
+
+function drawMeasurementStandardRow(page: PDFPage, standard: MeasurementStandard | undefined, y: number, fonts: PdfFonts): number {
+  let x = MARGIN;
+  const rowHeight = 27;
+  for (let index = 0; index < MEASUREMENT_WIDTHS.length; index += 1) {
+    const width = MEASUREMENT_WIDTHS[index];
+    page.drawRectangle({ x, y: y - rowHeight, width, height: rowHeight, color: PALE_BLUE, borderColor: rgb(0.62, 0.75, 0.94), borderWidth: 0.55 });
+    if (index === 0) {
+      drawText(page, "CHUẨN", x + 3, y - 16, fonts, 5.8, width - 6, BLUE);
+    } else if (index <= 7) {
+      const criterion = standard?.values[index - 1];
+      const target = String(criterion?.target ?? "").trim() || "-";
+      const minus = String(criterion?.minusTolerance ?? "").trim();
+      const plus = String(criterion?.plusTolerance ?? "").trim();
+      const tolerance = minus || plus ? `-${minus || plus}/+${plus || minus}` : "Chưa đặt sai số";
+      const targetWidth = textWidth(target, 7.1, fonts);
+      drawText(page, target, x + Math.max(3, (width - targetWidth) / 2), y - 11, fonts, 7.1, width - 6, NAVY);
+      const toleranceWidth = textWidth(tolerance, 4.8, fonts);
+      drawText(page, tolerance, x + Math.max(2, (width - toleranceWidth) / 2), y - 21, fonts, 4.8, width - 4, MUTED);
+    } else if (index === 8) {
+      const visual = String(standard?.visualResult ?? "").trim().toUpperCase() || "KHÔNG ÁP DỤNG";
+      const visualWidth = textWidth(visual, 6, fonts);
+      drawText(page, visual, x + Math.max(4, (width - visualWidth) / 2), y - 16, fonts, 6, width - 8, BLUE);
+    } else {
+      drawText(page, "TỰ ĐỘNG", x + 7, y - 16, fonts, 5.8, width - 14, BLUE);
+    }
+    x += width;
+  }
+  return y - rowHeight;
+}
+
+function drawMeasurementRow(page: PDFPage, values: string[], assessment: MeasurementAssessment, y: number, rowIndex: number, fonts: PdfFonts): number {
   let x = MARGIN;
   const rowHeight = 18;
   const fill = rowIndex % 2 === 0 ? WHITE : SURFACE;
   for (let index = 0; index < MEASUREMENT_WIDTHS.length; index += 1) {
     const width = MEASUREMENT_WIDTHS[index];
-    const visual = index === MEASUREMENT_WIDTHS.length - 1 ? String(values[index] ?? "").toUpperCase() : "";
-    const cellFill = visual === "OK" ? PALE_GREEN : visual === "NG" ? PALE_RED : fill;
-    const textColor = visual === "OK" ? GREEN : visual === "NG" ? RED : INK;
+    const checkStatus = index >= 1 && index <= 7
+      ? assessment.cells[index - 1]
+      : index === 8 ? assessment.visual
+        : index === 9 ? assessment.status : "not-configured";
+    const cellFill = checkStatus === "pass" ? PALE_GREEN : checkStatus === "fail" ? PALE_RED : fill;
+    const textColor = checkStatus === "pass" ? GREEN : checkStatus === "fail" ? RED : INK;
     page.drawRectangle({ x, y: y - rowHeight, width, height: rowHeight, color: cellFill, borderColor: LINE, borderWidth: 0.45 });
     const value = values[index] ?? "";
     const valueWidth = textWidth(value, 7, fonts);
@@ -206,22 +243,30 @@ export async function createQcSheetPdf(data: ProductQc, options: QcSheetOptions 
   drawText(page, data.defectContent || "Không ghi nhận lỗi.", MARGIN + 12, y - 26, fonts, 8, CONTENT_WIDTH - 24, (data.defectQuantity ?? 0) > 0 ? RED : GREEN);
   y -= 48;
 
-  y = sectionTitle(page, "KẾT QUẢ ĐO", `${data.measurements.length} mẫu đo`, y, fonts);
+  const measurementAssessments = data.measurements.map((measurement) => evaluateMeasurementRow(measurement, data.measurementStandard));
+  const passedMeasurements = measurementAssessments.filter((assessment) => assessment.status === "pass").length;
+  const failedMeasurements = measurementAssessments.filter((assessment) => assessment.status === "fail").length;
+  const pendingMeasurements = measurementAssessments.filter((assessment) => assessment.status === "pending").length;
+  const measurementSummary = `${passedMeasurements} đạt · ${failedMeasurements} không đạt · ${pendingMeasurements} chưa đủ`;
+  y = sectionTitle(page, "KẾT QUẢ ĐO", measurementSummary, y, fonts);
   y = drawMeasurementHeader(page, y, fonts);
+  y = drawMeasurementStandardRow(page, data.measurementStandard, y, fonts);
   let rowsOnCurrentPage = 0;
 
   for (let rowIndex = 0; rowIndex < data.measurements.length; rowIndex += 1) {
     const measurement = data.measurements[rowIndex];
-    const pageRowLimit = page === pdf.getPages()[0] ? 19 : 35;
+    const pageRowLimit = page === pdf.getPages()[0] ? 17 : 33;
     if (y - 18 < 52 || rowsOnCurrentPage >= pageRowLimit) {
       page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
       y = drawHeader(page, data, fonts, true);
-      y = sectionTitle(page, "KẾT QUẢ ĐO (TIẾP THEO)", `${data.measurements.length} mẫu đo`, y, fonts);
+      y = sectionTitle(page, "KẾT QUẢ ĐO (TIẾP THEO)", measurementSummary, y, fonts);
       y = drawMeasurementHeader(page, y, fonts);
+      y = drawMeasurementStandardRow(page, data.measurementStandard, y, fonts);
       rowsOnCurrentPage = 0;
     }
-    const values = [String(measurement.no), ...measurement.values.map(String), measurement.visualResult ?? ""];
-    y = drawMeasurementRow(page, values, y, rowIndex, fonts);
+    const assessment = measurementAssessments[rowIndex];
+    const values = [String(measurement.no), ...Array.from({ length: 7 }, (_, index) => String(measurement.values[index] ?? "")), measurement.visualResult ?? "", assessmentLabel(assessment.status)];
+    y = drawMeasurementRow(page, values, assessment, y, rowIndex, fonts);
     rowsOnCurrentPage += 1;
   }
 

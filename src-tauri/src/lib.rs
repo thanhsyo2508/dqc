@@ -1,3 +1,4 @@
+mod auth;
 mod commands;
 mod outbox;
 
@@ -10,6 +11,10 @@ pub fn run() {
             commands::outbox_discard,
             commands::outbox_upload,
             commands::outbox_retry_all,
+            commands::auth_login,
+            commands::auth_restore,
+            commands::auth_logout,
+            commands::server_ping,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Digital QC application");

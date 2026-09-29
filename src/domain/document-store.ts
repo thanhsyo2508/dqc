@@ -1,4 +1,4 @@
-import { createUniqueQcRecordId, type Product, type ProductQc } from "./product-qc.js";
+import { createEmptyMeasurementStandard, createUniqueQcRecordId, type Product, type ProductQc } from "./product-qc.js";
 
 export type DocumentStatus = "draft" | "preview-ready" | "sent" | "error";
 
@@ -64,6 +64,7 @@ export function createInternalDocument(product: Product, sequence: number): Inte
       defectQuantity: 0,
       defectContent: "",
       responseDueDate: "",
+      measurementStandard: createEmptyMeasurementStandard(),
       measurements: [{ no: 1, values: ["", "", "", "", "", "", ""], visualResult: "" }],
     },
     drawingNames: [],
@@ -163,6 +164,10 @@ export function restoreInternalDocuments(raw: string | null): InternalDocument[]
       .filter((document) => document?.documentId && document?.product && document?.qc)
       .map((document) => ({
         ...document,
+        qc: {
+          ...document.qc,
+          measurementStandard: document.qc.measurementStandard ?? createEmptyMeasurementStandard(),
+        },
         uploaded: document.uploaded ? {
           ...document.uploaded,
           qr: document.uploaded.qr ? { ...document.uploaded.qr, printCount: Number.isFinite(document.uploaded.qr.printCount) ? document.uploaded.qr.printCount : 0 } : (document.uploaded.openUrl ? { payload: createQrPayload({ ...document, uploaded: { ...document.uploaded, openUrl: document.uploaded.openUrl } }, document.uploaded.openUrl), createdAt: document.uploaded.sentAt, printCount: 0 } : undefined),

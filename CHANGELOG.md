@@ -6,11 +6,18 @@ Các thay đổi đáng chú ý của dự án Digital QC.
 
 ### Reliability and verification
 
+- Thêm đăng nhập Google OAuth 2.0 PKCE qua trình duyệt hệ thống; refresh token lưu trong Windows Credential Manager, ID token chỉ giữ trong bộ nhớ.
+- Bắt buộc xác thực cho `ping`, upload mới và retry Outbox; giới hạn endpoint về Google Apps Script `/exec` để tránh gửi token nhầm máy chủ.
+- Thêm sheet `ALLOWED_USERS` với vai trò `admin`, `uploader`, `viewer`, trạng thái active và quota riêng theo người dùng.
+- Thêm rate limit theo phút, hạn mức file/byte theo ngày cho từng người dùng và toàn hệ thống.
+- Chuyển lưu trữ sang Advanced Drive service v3, bắt buộc Shared Drive Restricted ở production và tự kiểm tra quyền chia sẻ công khai/domain.
+- Apps Script lưu PDF theo cây thư mục Drive `YYYY/MM/DD` bên dưới `DRIVE_FOLDER_ID`, đồng bộ ngày thư mục với ngày cấp số QC.
+- Ghi `qc_record_id` do ứng dụng tạo vào `UPLOAD_LOG`; Web App tự bổ sung cột này cho sheet cũ mà không dịch chuyển dữ liệu hiện hữu.
 - Hoàn thiện Rust Outbox: lưu `file.pdf`/`meta.json` trước upload, gửi HTTP từ Rust, giữ nguyên `request_id`, retry sau restart/mất mạng và xóa item sau response thành công.
 - Bổ sung tự khôi phục card sản phẩm từ metadata Outbox sau khi app mở lại.
 - Nhúng Noto Sans Vietnamese vào PDF QC; bảng nhiều dòng tự phân trang và nội dung dài được giới hạn theo chiều rộng ô.
 - Mở rộng `test-webapp.ps1` cho duplicate, sai SHA-256, PDF hỏng, concurrency và near-limit; đã chạy thành công trên Web App test thật.
-- Chưa bật OAuth production hoặc in trực tiếp; cần OAuth Client ID/kho token và máy Zebra, Brother, Godex để nghiệm thu.
+- OAuth và Shared Drive đã sẵn sàng trong source; cần OAuth Client ID, Shared Drive/quyền Workspace thật và máy Zebra, Brother, Godex để nghiệm thu production.
 - Sửa lỗi PDF ô vuông bằng cách nhúng đồng thời font Latin và Vietnamese, chọn font theo glyph.
 - Sau upload thành công, card sản phẩm được đóng/xóa khỏi workspace nhưng hồ sơ vẫn giữ trong Document Library.
 

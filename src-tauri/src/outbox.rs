@@ -116,9 +116,7 @@ pub fn enqueue(
     if page_count == 0 || pdf_bytes.len() < 5 || &pdf_bytes[..5] != b"%PDF-" {
         return Err("Only a valid PDF preview can be queued".to_string());
     }
-    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
-        return Err("A valid upload endpoint is required".to_string());
-    }
+    validate_endpoint(&endpoint)?;
     let qc: Value =
         serde_json::from_str(&qc_json).map_err(|_| "Invalid QC metadata".to_string())?;
     if !qc.get("product").is_some() {
@@ -198,6 +196,7 @@ fn upload_body(meta: &OutboxMeta, pdf_bytes: &[u8]) -> Result<Value, String> {
         "data": {
             "request_id": meta.request_id,
             "product_key": meta.product_key,
+            "qc_record_id": qc.get("recordId").and_then(Value::as_str).unwrap_or_default(),
             "project": product.get("project").and_then(Value::as_str).unwrap_or_default(),
             "po": product.get("po").and_then(Value::as_str).unwrap_or_default(),
             "part_no": product.get("partNo").and_then(Value::as_str).unwrap_or_default(),
@@ -216,10 +215,57 @@ fn upload_body(meta: &OutboxMeta, pdf_bytes: &[u8]) -> Result<Value, String> {
     Ok(body)
 }
 
+pub(crate) fn validate_endpoint(endpoint: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(endpoint).map_err(|_| "A valid upload endpoint is required")?;
+    let path = url.path().trim_matches('/').split('/').collect::<Vec<_>>();
+    let is_apps_script = url.scheme() == "https"
+        && url.host_str() == Some("script.google.com")
+        && path.len() == 4
+        && path[0] == "macros"
+        && path[1] == "s"
+        && !path[2].is_empty()
+        && path[3] == "exec";
+    if !is_apps_script {
+        return Err("Only a Google Apps Script /exec endpoint is allowed".to_string());
+    }
+    Ok(())
+}
+
+pub async fn ping(endpoint: String, id_token: String) -> Result<Value, String> {
+    validate_endpoint(&endpoint)?;
+    if id_token.trim().is_empty() {
+        return Err("Google sign-in is required before contacting the server".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| format!("Cannot create HTTP client: {error}"))?;
+    let body = json!({
+        "action": "ping",
+        "api_version": 1,
+        "auth": { "id_token": id_token },
+    });
+    let response = client
+        .post(endpoint)
+        .header("content-type", "text/plain;charset=UTF-8")
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|error| format!("Server ping failed: {error}"))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| format!("Cannot read ping response: {error}"))?;
+    serde_json::from_str(&text)
+        .map_err(|error| format!("Server returned invalid JSON ({status}): {error}"))
+}
+
 pub async fn upload(
     app: &AppHandle,
     request_id: String,
-    id_token: Option<String>,
+    id_token: String,
 ) -> Result<Value, String> {
     let mut meta = read_meta(app, &request_id)?;
     if meta.endpoint.is_empty() || meta.qc_json.is_empty() {
@@ -243,10 +289,12 @@ pub async fn upload(
     meta.last_error = None;
     write_meta(app, &meta)?;
 
-    let mut body = upload_body(&meta, &pdf_bytes)?;
-    if let Some(token) = id_token.filter(|token| !token.trim().is_empty()) {
-        body["auth"] = json!({ "id_token": token });
+    if id_token.trim().is_empty() {
+        return Err("Google sign-in is required before uploading".to_string());
     }
+    validate_endpoint(&meta.endpoint)?;
+    let mut body = upload_body(&meta, &pdf_bytes)?;
+    body["auth"] = json!({ "id_token": id_token });
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(120))
@@ -303,7 +351,10 @@ pub async fn upload(
     Ok(result)
 }
 
-pub async fn retry_all(app: &AppHandle) -> Result<Vec<OutboxRetryResult>, String> {
+pub async fn retry_all(
+    app: &AppHandle,
+    id_token: String,
+) -> Result<Vec<OutboxRetryResult>, String> {
     let items = list(app)?;
     let mut results = Vec::new();
     for item in items
@@ -311,7 +362,7 @@ pub async fn retry_all(app: &AppHandle) -> Result<Vec<OutboxRetryResult>, String
         .filter(|item| item.status == "pending" || item.status == "sending")
     {
         let request_id = item.request_id.clone();
-        match upload(app, request_id.clone(), None).await {
+        match upload(app, request_id.clone(), id_token.clone()).await {
             Ok(response) => results.push(OutboxRetryResult {
                 request_id,
                 document_id: item.document_id.clone(),
@@ -376,7 +427,7 @@ fn chrono_like_now() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{safe_request_id, sha256_hex};
+    use super::{safe_request_id, sha256_hex, upload_body, validate_endpoint, OutboxMeta};
 
     #[test]
     fn rejects_path_traversal_request_ids() {
@@ -391,5 +442,35 @@ mod tests {
             sha256_hex(b"Digital QC"),
             "3935d53a5b872b1f15557423336cdce8ddefd5da832f910a2d03d0b92fafc4cd"
         );
+    }
+
+    #[test]
+    fn includes_qc_record_id_in_upload_body() {
+        let meta = OutboxMeta {
+            request_id: "request-001".to_string(),
+            document_id: "document-001".to_string(),
+            product_key: "product-001".to_string(),
+            page_count: 1,
+            size_bytes: 9,
+            sha256: sha256_hex(b"%PDF-test"),
+            status: "pending".to_string(),
+            attempt_count: 0,
+            created_at: "test".to_string(),
+            updated_at: "test".to_string(),
+            last_error: None,
+            endpoint: "https://example.test/exec".to_string(),
+            api_version: 1,
+            qc_json: r#"{"recordId":"QC-UNIQUE-001","product":{"project":"P","po":"PO","partNo":"PART","quantity":1,"unit":"PCS","slipNo":"NK","receivedDate":"2026-09-29"}}"#.to_string(),
+        };
+
+        let body = upload_body(&meta, b"%PDF-test").expect("upload body");
+        assert_eq!(body["data"]["qc_record_id"], "QC-UNIQUE-001");
+    }
+
+    #[test]
+    fn only_allows_apps_script_endpoints() {
+        assert!(validate_endpoint("https://script.google.com/macros/s/deployment-id/exec").is_ok());
+        assert!(validate_endpoint("http://127.0.0.1:1234/exec").is_err());
+        assert!(validate_endpoint("https://example.test/exec").is_err());
     }
 }

@@ -249,6 +249,7 @@ Kiểm tra kết nối, phiên bản, quyền.
   "data": {
     "request_id": "uuid-v4",
     "product_key": "AUTM260580-0|MKAC-FBT-260817|2410011-FR1-014|NK-FBT-260909-10",
+    "qc_record_id": "QC-1727581200123-483921",
     "project": "AUTM260580-0",
     "po": "MKAC-FBT-260817",
     "part_no": "2410011-FR1-014",
@@ -270,6 +271,7 @@ Thành công:
 {
   "success": true, "api_version": 1,
   "qc_no": "QC-260924-0001",
+  "qc_record_id": "QC-1727581200123-483921",
   "product_key": "AUTM260580-0|MKAC-FBT-260817|2410011-FR1-014|NK-FBT-260909-10",
   "file_name": "QC-260924-0001.pdf",
   "file_id": "FILE_ID",
@@ -305,7 +307,7 @@ Chỉ `upload_finish` (hoặc `upload_qc_pdf`) mới trả `success: true` cho v
 4. **Khóa:** `LockService.getScriptLock().waitLock(...)`; hết hạn → `LOCK_TIMEOUT`.
 5. **Chống trùng:** tìm `request_id` trong `UPLOAD_LOG`; có thì trả kết quả cũ. Không gộp nhiều sản phẩm vào một request.
 6. **Cấp số:** `QC-YYMMDD-NNNN` (quy tắc ở mục 15).
-7. **Lưu Drive:** tạo một file cho một hồ sơ sản phẩm trong thư mục cố định; lấy `file_id`, `getUrl()`, `getDownloadUrl()`.
+7. **Lưu Drive:** dùng Advanced Drive service v3 với `supportsAllDrives`, xác minh thư mục gốc thuộc Shared Drive Restricted, tạo hoặc tái sử dụng cây `YYYY/MM/DD`, rồi lưu một file cho một hồ sơ sản phẩm.
 8. **Ghi Sheet:** thêm một dòng vào `UPLOAD_LOG`.
 9. **Nếu bước 8 lỗi:** `file.setTrashed(true)`, trả `SHEET_WRITE_FAILED`. Nếu dọn cũng lỗi, ghi vào sheet `ERROR_LOG` để xử lý tay.
 10. **Nhả khóa** trong `finally`, trả `success: true` chỉ khi cả bước 7 và 8 xong.
@@ -335,14 +337,22 @@ Drive (tạo file trong thư mục), Sheets (ghi log), và `script.external_requ
 5. Apps Script xác minh `id_token` (ví dụ gọi endpoint `tokeninfo` của Google bằng `UrlFetchApp`, kiểm tra `aud` khớp OAuth client ID của app, `exp`, `email_verified`), rồi lấy `email`.
 6. Đối chiếu `email` với sheet `ALLOWED_USERS` (hoặc Google Group). Không có → `FORBIDDEN`.
 
-### 9.3 Điều cần kiểm chứng ở Giai đoạn 0
+### 9.3 Vai trò và hạn mức đã triển khai
+
+- `admin`: upload và được phép đọc lại kết quả của `request_id` trùng thuộc người dùng khác khi xử lý sự cố.
+- `uploader`: upload; chỉ nhận lại kết quả request trùng do chính tài khoản đó tạo.
+- `viewer`: xác thực/ping nhưng không được upload.
+- Mỗi tài khoản có `daily_file_limit`, `daily_byte_limit`; hệ thống có quota file/byte tổng theo ngày.
+- Mọi request đã xác thực chịu `RATE_LIMIT_PER_MINUTE`. Quota nghiệp vụ này không thay thế WAF/DDoS protection ở tầng mạng.
+
+### 9.4 Điều cần kiểm chứng ở Giai đoạn 0
 - Với Web App deploy "Execute as: Me", chế độ truy cập nào cho phép app desktop gọi được mà vẫn bảo đảm chỉ người được phép dùng được (thường phải cho gọi ẩn danh rồi tự xác minh token trong mã).
 - Endpoint xác minh token có chịu được tải và độ trễ của việc gọi mỗi request; cân nhắc lưu tạm kết quả xác minh bằng `CacheService` trong thời gian ngắn.
 - Độ trễ tổng của một lần gọi.
 
 Kết quả thử nghiệm quyết định chốt phương án; cấu trúc `Auth.gs` được tách riêng để đổi được mà không đụng nghiệp vụ.
 
-### 9.4 Quyền mở/tải PDF trên Drive
+### 9.5 Quyền mở/tải PDF trên Drive
 - Thư mục Drive để **Restricted**, chia sẻ cho Google Group của nhân viên QC; không dùng "Anyone with the link".
 - Quyền mở PDF là quyền Drive của người quét, **độc lập** với quyền gọi API upload. Hai danh sách này nên khớp nhau nhưng quản lý riêng.
 - Người quét đăng nhập nhiều tài khoản Google cần chọn đúng tài khoản được chia sẻ.
@@ -442,6 +452,7 @@ Mỗi dòng là **một hồ sơ QC của một sản phẩm**; không có dòng
 | --- | --- |
 | `uploaded_at` | Thời điểm upload thành công |
 | `qc_no` | Số hồ sơ QC do server cấp |
+| `qc_record_id` | Mã hồ sơ QC duy nhất do ứng dụng tạo, dùng để tra cứu và đối chiếu nhanh |
 | `product_key` | Khóa ổn định của sản phẩm/lô/phiếu |
 | `project` | Mã dự án |
 | `po` | PO |
@@ -460,7 +471,7 @@ Mỗi dòng là **một hồ sơ QC của một sản phẩm**; không có dòng
 | `uploaded_by` | Email người upload (khi dùng phương án B) |
 | `sha256` | Băng đối chiếu file |
 
-Khóa hàng tiêu đề, tạo bộ lọc theo `project`, `po`, `part_no`, `product_key`. **Không** lưu dữ liệu đo hay nội dung phiếu.
+Khóa hàng tiêu đề, tạo bộ lọc theo `qc_record_id`, `project`, `po`, `part_no`, `product_key`. **Không** lưu dữ liệu đo hay nội dung phiếu.
 
 ### 12.2 Các sheet phụ
 | Sheet | Dùng cho |
@@ -595,7 +606,7 @@ Khóa hàng tiêu đề, tạo bộ lọc theo `project`, `po`, `part_no`, `prod
 
 - `apps-script/` đã có API test cho `ping` và `upload_qc_pdf`; cấu hình bằng Script Properties, không lưu secret trong source.
 - `src-tauri/src/outbox.rs` đã có hàng đợi bền vững theo `request_id`, lưu riêng `meta.json` và `file.pdf`, upload HTTP bằng Rust, retry sau restart/mất mạng và xóa item sau response thành công.
-- Web App test thật đã xác nhận ping, upload, duplicate, sai SHA-256, PDF hỏng, concurrency và file gần 20 MiB. OAuth production vẫn chờ OAuth Client ID, PKCE loopback và kho token hệ điều hành.
+- Source đã có OAuth PKCE loopback, refresh token trong Windows Credential Manager, auth gate UI, xác minh ID token phía server, allowlist/vai trò, quota và Shared Drive Restricted. Việc kích hoạt production còn cần OAuth Client ID, Shared Drive và quyền Workspace thật từ quản trị viên.
 
 ## 22. Thư viện file upload và UX workspace
 
@@ -637,6 +648,6 @@ Khóa hàng tiêu đề, tạo bộ lọc theo `project`, `po`, `part_no`, `prod
 ## 24. Điều kiện để hoàn tất các mốc production
 
 - Cần URL Web App `/exec`, `DRIVE_FOLDER_ID`, `LOG_SPREADSHEET_ID` và một bộ PDF thử nghiệm để chạy kiểm thử server thật.
-- Cần OAuth Client ID, redirect loopback, kho token hệ điều hành và danh sách tài khoản QC trước khi bật `ENFORCE_AUTH=true`.
+- Cần tạo OAuth Desktop Client ID, cấu hình `.env.local`/Script Properties, Shared Drive Restricted và danh sách tài khoản QC; `ENFORCE_AUTH` mặc định đã là `true`.
 - Cần ít nhất một model thực tế của Zebra, Brother hoặc Godex, khổ tem, driver và mẫu tem để hiệu chỉnh offset/in nhiệt.
-- Tauri outbox đã có worker retry cơ bản; cần bổ sung OAuth token refresh an toàn trước khi chạy với `ENFORCE_AUTH=true`.
+- Tauri outbox đã tự lấy/làm mới ID token trước mỗi upload/retry; khi đăng xuất hoặc refresh thất bại, item vẫn được giữ để gửi lại sau.

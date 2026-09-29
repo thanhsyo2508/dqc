@@ -1,6 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import type { ProductQc } from "../domain/product-qc.js";
-import { enqueuePdfInOutbox, uploadQueuedPdf } from "./tauri-bridge.js";
+import { enqueuePdfInOutbox, isTauriRuntime, pingAuthenticatedServer, uploadQueuedPdf } from "./tauri-bridge.js";
 
 // Apps Script Web Apps do not answer browser OPTIONS preflight requests.
 // text/plain is a CORS-safelisted content type; the body is still JSON and
@@ -11,6 +11,7 @@ export interface UploadResponse {
   success: boolean;
   api_version: number;
   qc_no?: string;
+  qc_record_id?: string;
   product_key?: string;
   file_name?: string;
   file_id?: string;
@@ -25,9 +26,28 @@ export interface PingResponse {
   success: boolean;
   api_version: number;
   user?: string;
+  role?: string;
   allowed?: boolean;
   message?: string;
   code?: string;
+}
+
+function assertTrustedUploadEndpoint(endpoint: string): void {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error("URL Web App không hợp lệ.");
+  }
+  const isAppsScript = url.protocol === "https:"
+    && url.hostname === "script.google.com"
+    && /^\/macros\/s\/[^/]+\/exec$/.test(url.pathname);
+  const isLoopback = !isTauriRuntime()
+    && (url.hostname === "127.0.0.1" || url.hostname === "localhost")
+    && (url.protocol === "http:" || url.protocol === "https:");
+  if (!isAppsScript && !isLoopback) {
+    throw new Error("Chỉ cho phép URL Google Apps Script /exec để bảo vệ token đăng nhập.");
+  }
 }
 
 export interface UploadOptions {
@@ -35,6 +55,7 @@ export interface UploadOptions {
   requestId: string;
   documentId?: string;
   productKey: string;
+  idToken?: string;
   apiVersion?: number;
   fetchImpl?: typeof fetch;
 }
@@ -48,11 +69,18 @@ async function readJsonResponse<T>(response: Response, operation: string): Promi
   }
 }
 
-export async function pingServer(endpoint: string, fetchImpl: typeof fetch = fetch): Promise<PingResponse> {
+export async function pingServer(endpoint: string, idToken = "", fetchImpl: typeof fetch = fetch): Promise<PingResponse> {
+  assertTrustedUploadEndpoint(endpoint);
+  if (isTauriRuntime()) {
+    const result = await pingAuthenticatedServer(endpoint) as unknown as PingResponse;
+    if (!result.success) throw new Error(result.message ?? result.code ?? "Server ping failed");
+    return result;
+  }
+  if (!idToken) throw new Error("Google ID token is required for server ping.");
   const response = await fetchImpl(endpoint, {
     method: "POST",
     headers: APPS_SCRIPT_REQUEST_HEADERS,
-    body: JSON.stringify({ action: "ping", api_version: 1 }),
+    body: JSON.stringify({ action: "ping", api_version: 1, auth: { id_token: idToken } }),
   });
   const result = await readJsonResponse<PingResponse>(response, "Ping server");
   if (!result.success) throw new Error(result.message ?? result.code ?? "Server ping failed");
@@ -95,6 +123,7 @@ export async function uploadProductPdf(
   qc: ProductQc,
   options: UploadOptions,
 ): Promise<UploadResponse> {
+  assertTrustedUploadEndpoint(options.endpoint);
   const pageCount = (await PDFDocument.load(pdfBytes)).getPageCount();
   const queued = await enqueuePdfInOutbox({
     requestId: options.requestId,
@@ -120,6 +149,7 @@ export async function uploadProductPdf(
 
   const hash = await sha256(pdfBytes);
   const encoded = base64(pdfBytes);
+  if (!options.idToken) throw new Error("Google ID token is required for browser upload.");
   const fetchImpl = options.fetchImpl ?? fetch;
   const response = await fetchImpl(options.endpoint, {
     method: "POST",
@@ -127,9 +157,11 @@ export async function uploadProductPdf(
     body: JSON.stringify({
       action: "upload_qc_pdf",
       api_version: options.apiVersion ?? 1,
+      auth: { id_token: options.idToken },
       data: {
         request_id: options.requestId,
         product_key: options.productKey,
+        qc_record_id: qc.recordId,
         project: qc.product.project,
         po: qc.product.po,
         part_no: qc.product.partNo,

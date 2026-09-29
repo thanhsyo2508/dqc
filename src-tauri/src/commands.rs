@@ -1,4 +1,7 @@
-use crate::outbox::{self, OutboxMeta};
+use crate::{
+    auth,
+    outbox::{self, OutboxMeta},
+};
 use tauri::AppHandle;
 
 #[tauri::command]
@@ -31,12 +34,41 @@ pub async fn outbox_upload(
     app: AppHandle,
     request_id: String,
 ) -> Result<serde_json::Value, String> {
-    outbox::upload(&app, request_id, None).await
+    let id_token = auth::valid_id_token().await?;
+    outbox::upload(&app, request_id, id_token).await
 }
 
 #[tauri::command]
 pub async fn outbox_retry_all(app: AppHandle) -> Result<Vec<outbox::OutboxRetryResult>, String> {
-    outbox::retry_all(&app).await
+    let id_token = auth::valid_id_token().await?;
+    outbox::retry_all(&app, id_token).await
+}
+
+#[tauri::command]
+pub async fn auth_login(
+    client_id: String,
+    client_secret: String,
+) -> Result<auth::AuthSession, String> {
+    auth::login(client_id, client_secret).await
+}
+
+#[tauri::command]
+pub async fn auth_restore(
+    client_id: String,
+    client_secret: String,
+) -> Result<Option<auth::AuthSession>, String> {
+    auth::restore(client_id, client_secret).await
+}
+
+#[tauri::command]
+pub async fn auth_logout() -> Result<(), String> {
+    auth::logout().await
+}
+
+#[tauri::command]
+pub async fn server_ping(endpoint: String) -> Result<serde_json::Value, String> {
+    let id_token = auth::valid_id_token().await?;
+    outbox::ping(endpoint, id_token).await
 }
 
 #[tauri::command]

@@ -23,6 +23,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; min-width: 320px; background: var(--color-background); }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; touch-action: manipulation; }
@@ -39,6 +40,23 @@ button:disabled { cursor: not-allowed; opacity: .52; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; color: #fff; background: var(--color-primary); border-radius: 9px; }
 .brand-mark .ui-icon { width: 20px; height: 20px; }
 .topbar-actions { gap: 12px; }
+.auth-account { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 9px 5px 5px; color: var(--color-primary); background: #fff; border: 1px solid #dbe4ef; border-radius: 999px; box-shadow: var(--shadow-sm); }
+.auth-account > span:nth-child(2) { display: grid; max-width: 170px; text-align: left; }
+.auth-account strong, .auth-account small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auth-account strong { font-size: 11px; }
+.auth-account small { color: #64748b; font-size: 9px; }
+.auth-avatar { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 50%; color: #fff; background: linear-gradient(135deg, #2563eb, #059669); font-size: 12px; font-weight: 900; }
+.auth-signout { color: #64748b; font-size: 10px; font-weight: 700; }
+.auth-gate { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at top, rgb(37 99 235 / .20), transparent 38%), rgb(15 23 42 / .72); backdrop-filter: blur(10px); }
+.auth-card { display: grid; justify-items: center; width: min(440px, 100%); padding: 38px; border: 1px solid rgb(255 255 255 / .7); border-radius: 22px; background: #fff; box-shadow: 0 24px 80px rgb(15 23 42 / .30); text-align: center; }
+.auth-logo { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 22px; border-radius: 17px; color: #fff; background: linear-gradient(145deg, #1e3a5f, #2563eb); box-shadow: 0 12px 28px rgb(37 99 235 / .25); font-weight: 900; letter-spacing: .08em; }
+.auth-card h1 { margin: 10px 0 10px; color: var(--color-primary); font-size: 25px; letter-spacing: -.03em; }
+.auth-card > p { max-width: 340px; margin: 0 0 24px; color: #64748b; line-height: 1.55; }
+.google-sign-in { display: flex; align-items: center; justify-content: center; gap: 11px; width: 100%; min-height: 48px; padding: 10px 16px; color: #1f2937; background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; font-weight: 800; box-shadow: var(--shadow-sm); }
+.google-sign-in:hover:not(:disabled) { border-color: #93c5fd; background: #f8fbff; }
+.google-sign-in span { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; color: #fff; background: #2563eb; font-weight: 900; }
+.auth-message { min-height: 18px; margin-top: 14px; color: #475569; line-height: 1.45; }
+.auth-security-note { margin-top: 22px; padding-top: 16px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 11px; line-height: 1.5; }
 .connection-pill, .draft-badge { gap: 7px; padding: 7px 10px; border: 1px solid #cfe9dd; border-radius: 999px; color: #047857; background: #f0fdf4; font-size: 12px; font-weight: 700; }
 .connection-pill { min-height: 36px; cursor: pointer; }
 .connection-pill.is-not-configured { color: #92400e; border-color: #fde68a; background: #fffbeb; }
@@ -158,18 +176,40 @@ button:disabled { cursor: not-allowed; opacity: .52; }
 .subsection-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 11px; }
 .subsection-heading h3 { margin: 0; color: var(--color-primary); font-size: 13px; }
 .subsection-heading span { color: #94a3b8; font-size: 11px; }
-.measurement-scroll { width: 100%; overflow-x: auto; padding-bottom: 4px; }
-.measurement-table-head, .measurement-row { display: grid; grid-template-columns: 74px repeat(7, minmax(50px, 1fr)) minmax(100px, 1.5fr) 30px; gap: 6px; }
-.measurement-table-head, .measurement-row { min-width: 680px; }
+.measurement-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin: -4px 0 8px; color: #64748b; font-size: 10px; font-weight: 700; }
+.measurement-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend-dot { width: 7px; height: 7px; border-radius: 50%; background: #cbd5e1; }
+.legend-dot.pass { background: #16a34a; }
+.legend-dot.fail { background: #dc2626; }
+.legend-dot.pending { background: #f59e0b; }
+.measurement-scroll { width: 100%; overflow-x: visible; padding-bottom: 4px; }
+.measurement-table-head, .measurement-row { display: grid; grid-template-columns: 76px repeat(7, minmax(44px, 1fr)) minmax(72px, 1.2fr) 76px 30px; gap: 4px; min-width: 0; }
 .measurement-row + .measurement-row { margin-top: 8px; }
 #measurementRows { display: grid; gap: 8px; }
+#measurementStandard { margin-bottom: 10px; }
 .measurement-table-head { margin-bottom: 5px; color: #94a3b8; font-size: 10px; font-weight: 800; text-align: center; }
 .measurement-table-head span:first-child { text-align: left; }
-.row-label { display: grid; place-items: center start; color: #64748b; font-size: 11px; font-weight: 700; }
+.row-label { display: grid; place-content: center start; gap: 2px; color: #64748b; font-size: 11px; font-weight: 700; }
+.row-label small { color: #64748b; font-size: 8px; font-weight: 600; line-height: 1.25; }
 .measurement-field { display: block; min-width: 0; }
 .measurement-field-label { display: none; }
-.measurement-row input, .measurement-row select { min-height: 36px; padding: 8px; font-size: 12px; }
+.measurement-row input, .measurement-row select { min-height: 36px; padding: 7px 4px; font-size: 11.5px; }
+.measurement-standard-row { align-items: stretch; padding: 8px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; box-shadow: inset 4px 0 #2563eb; }
+.measurement-standard-row .row-label { color: #15335f; }
+.measurement-standard-field > .standard-target { min-height: 34px; border-color: #93c5fd; font-weight: 800; text-align: center; }
+.tolerance-inputs { display: grid; grid-template-columns: 1fr; gap: 3px; margin-top: 3px; }
+.measurement-standard-row .tolerance-inputs input { min-width: 0; min-height: 28px; padding: 5px 3px; font-size: 9px; text-align: center; }
+.measurement-field.is-pass input, .measurement-field.is-pass select { border-color: #86efac; color: #166534; background: #f0fdf4; }
+.measurement-field.is-fail input, .measurement-field.is-fail select { border-color: #fca5a5; color: #991b1b; background: #fef2f2; }
+.measurement-field.is-pending input, .measurement-field.is-pending select { border-color: #fcd34d; background: #fffbeb; }
+.measurement-result { display: inline-grid; place-items: center; align-self: center; min-height: 28px; padding: 5px 7px; border-radius: 999px; font-size: 9px; font-weight: 900; line-height: 1.1; text-align: center; }
+.measurement-result.is-pass { color: #166534; background: #dcfce7; }
+.measurement-result.is-fail { color: #991b1b; background: #fee2e2; }
+.measurement-result.is-pending { color: #92400e; background: #fef3c7; }
+.measurement-result.is-standard { color: #1d4ed8; background: #dbeafe; }
+.measurement-action-spacer { display: block; }
 .remove-measurement, .remove-drawing { display: grid; place-items: center; width: 44px; min-height: 44px; padding: 0; border: 1px solid transparent; border-radius: 7px; color: #94a3b8; background: transparent; }
+.measurement-row .remove-measurement { width: 100%; min-width: 0; }
 .remove-measurement:hover, .remove-drawing:hover { color: var(--color-destructive); background: #fef2f2; border-color: #fecaca; }
 .remove-measurement .ui-icon, .remove-drawing .ui-icon { width: 15px; height: 15px; }
 .tertiary { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; padding: 0 11px; border: 1px solid #bfdbfe; border-radius: 7px; color: var(--color-secondary); background: #fff; font-size: 11px; font-weight: 800; }
@@ -438,6 +478,9 @@ button:disabled { cursor: not-allowed; opacity: .52; }
   .measurement-row { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; gap: 9px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
   .row-label { grid-column: 1 / -1; min-height: 26px; }
   .measurement-field-label { display: block; margin-bottom: 4px; color: #64748b; font-size: 10px; font-weight: 800; }
+  .tolerance-inputs { grid-template-columns: 1fr 1fr; }
+  .measurement-result { grid-column: 1 / -1; justify-self: stretch; }
+  .measurement-action-spacer { display: none; }
   .remove-measurement { width: 100%; grid-column: 1 / -1; }
 }
 @media (max-width: 480px) {

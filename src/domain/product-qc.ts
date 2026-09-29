@@ -17,6 +17,25 @@ export interface MeasurementRow {
   visualResult?: string;
 }
 
+export interface MeasurementCriterion {
+  target: string | number;
+  minusTolerance: string | number;
+  plusTolerance: string | number;
+}
+
+export interface MeasurementStandard {
+  values: MeasurementCriterion[];
+  visualResult?: string;
+}
+
+export type MeasurementCheckStatus = "pass" | "fail" | "pending" | "not-configured";
+
+export interface MeasurementAssessment {
+  status: Exclude<MeasurementCheckStatus, "not-configured">;
+  cells: MeasurementCheckStatus[];
+  visual: MeasurementCheckStatus;
+}
+
 export interface ProductQc {
   product: Product;
   recordId: string;
@@ -26,7 +45,55 @@ export interface ProductQc {
   defectQuantity?: number;
   defectContent?: string;
   responseDueDate?: string;
+  measurementStandard?: MeasurementStandard;
   measurements: MeasurementRow[];
+}
+
+export function createEmptyMeasurementStandard(columnCount = 7): MeasurementStandard {
+  return {
+    values: Array.from({ length: columnCount }, () => ({ target: "", minusTolerance: "", plusTolerance: "" })),
+    visualResult: "",
+  };
+}
+
+function hasMeasurementValue(value: string | number | undefined): boolean {
+  return String(value ?? "").trim() !== "";
+}
+
+function measurementNumber(value: string | number | undefined): number | undefined {
+  if (!hasMeasurementValue(value)) return undefined;
+  const normalized = String(value).trim().replace(/\s+/g, "").replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function evaluateMeasurementCell(value: string | number | undefined, criterion: MeasurementCriterion | undefined): MeasurementCheckStatus {
+  if (!criterion || ![criterion.target, criterion.minusTolerance, criterion.plusTolerance].some(hasMeasurementValue)) return "not-configured";
+  const target = measurementNumber(criterion.target);
+  const minus = measurementNumber(criterion.minusTolerance);
+  const plus = measurementNumber(criterion.plusTolerance);
+  if (target === undefined || (minus === undefined && plus === undefined)) return "pending";
+  const measured = measurementNumber(value);
+  if (measured === undefined) return "pending";
+  const lowerTolerance = Math.abs(minus ?? plus ?? 0);
+  const upperTolerance = Math.abs(plus ?? minus ?? 0);
+  return measured >= target - lowerTolerance && measured <= target + upperTolerance ? "pass" : "fail";
+}
+
+export function evaluateMeasurementRow(row: MeasurementRow, standard?: MeasurementStandard): MeasurementAssessment {
+  const cells = Array.from({ length: 7 }, (_, index) => evaluateMeasurementCell(row.values[index], standard?.values[index]));
+  const expectedVisual = String(standard?.visualResult ?? "").trim().toUpperCase();
+  const actualVisual = String(row.visualResult ?? "").trim().toUpperCase();
+  const visual: MeasurementCheckStatus = expectedVisual
+    ? actualVisual ? (actualVisual === expectedVisual ? "pass" : "fail") : "pending"
+    : "not-configured";
+  const configuredChecks = [...cells, visual].filter((status) => status !== "not-configured");
+  const status = configuredChecks.some((check) => check === "fail")
+    ? "fail"
+    : configuredChecks.length === 0 || configuredChecks.some((check) => check === "pending")
+      ? "pending"
+      : "pass";
+  return { status, cells, visual };
 }
 
 const issuedQcRecordIds = new Set<string>();

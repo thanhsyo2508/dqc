@@ -35,8 +35,39 @@ export interface OutboxRetryResult {
   meta: OutboxMeta;
 }
 
-function isTauriRuntime(): boolean {
+export interface AuthSession {
+  email: string;
+  name: string;
+  picture: string;
+  expiresAt: number;
+}
+
+export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+export async function loginWithGoogle(clientId: string, clientSecret: string): Promise<AuthSession> {
+  if (!isTauriRuntime()) throw new Error("Đăng nhập Google chỉ khả dụng trong ứng dụng Digital QC desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<AuthSession>("auth_login", { clientId, clientSecret });
+}
+
+export async function restoreGoogleSession(clientId: string, clientSecret: string): Promise<AuthSession | null> {
+  if (!isTauriRuntime()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<AuthSession | null>("auth_restore", { clientId, clientSecret });
+}
+
+export async function logoutGoogle(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("auth_logout");
+}
+
+export async function pingAuthenticatedServer(endpoint: string): Promise<Record<string, unknown>> {
+  if (!isTauriRuntime()) throw new Error("Server ping with Google authentication requires Digital QC desktop.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<Record<string, unknown>>("server_ping", { endpoint });
 }
 
 export async function enqueuePdfInOutbox(input: OutboxEnqueueInput): Promise<OutboxMeta | null> {

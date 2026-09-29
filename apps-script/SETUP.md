@@ -1,132 +1,139 @@
-# Tạo Apps Script server để test Digital QC
+# Triển khai Digital QC với Google OAuth và Shared Drive
 
-Thư mục này là một Apps Script **standalone project**. App desktop gọi URL Web App của project bằng các action:
+Ứng dụng dùng OAuth 2.0 Authorization Code + PKCE, mở trang đăng nhập trong trình duyệt hệ thống. Refresh token chỉ được lưu trong Windows Credential Manager. Apps Script xác minh ID token lần nữa trước mọi thao tác.
 
-- `ping` — kiểm tra endpoint.
-- `upload_qc_pdf` — lưu một PDF vào Drive và metadata vào Sheet.
+## 1. Tạo Shared Drive Restricted
 
-## 1. Đăng nhập clasp
+1. Trong Google Workspace, tạo Shared Drive riêng cho Digital QC.
+2. Chỉ thêm người dùng hoặc Google Group cần thiết; không bật `Anyone with the link` và không cấp quyền rộng cho toàn domain.
+3. Tạo thư mục gốc, ví dụ `Digital QC/PDF`, rồi lấy ID thư mục từ URL.
+4. Tài khoản sở hữu deployment Apps Script cần tối thiểu quyền cho phép tạo file/thư mục. Nhân viên chỉ cần xem PDF có thể là Viewer.
+5. Spreadsheet log nên nằm trong cùng Shared Drive hoặc khu vực Restricted tương đương.
 
-Mở PowerShell tại thư mục gốc repo:
+Script dùng Advanced Drive service v3 và tự tạo cây `YYYY/MM/DD` dưới thư mục gốc. Hàm `verifyStorageConfiguration()` sẽ từ chối thư mục My Drive khi `REQUIRE_SHARED_DRIVE=true`, đồng thời từ chối quyền `anyone` hoặc `domain`.
+
+## 2. Tạo OAuth Desktop Client
+
+Trong Google Cloud Console:
+
+1. Chọn/tạo project thuộc Google Workspace của công ty.
+2. Cấu hình OAuth consent screen; với ứng dụng nội bộ nên chọn audience `Internal`.
+3. Tạo OAuth Client loại `Desktop app`.
+4. Copy Client ID có dạng `...apps.googleusercontent.com`.
+5. Không cần và không được nhúng client secret vào ứng dụng desktop.
+
+Tạo file `.env.local` ở thư mục gốc (file này đã được Git bỏ qua):
+
+```dotenv
+VITE_GOOGLE_OAUTH_CLIENT_ID=000000000000-xxxxxxxx.apps.googleusercontent.com
+```
+
+Có thể copy từ `.env.example`. Build lại ứng dụng sau khi đổi Client ID.
+
+## 3. Push Apps Script
 
 ```powershell
 clasp login
-```
-
-Trình duyệt sẽ mở để bạn cấp quyền cho clasp. Chỉ cần làm một lần trên máy phát triển.
-
-Kiểm tra clasp:
-
-```powershell
-clasp --version
-```
-
-## 2. Tạo project Google Apps Script
-
-Chạy trong thư mục `apps-script`:
-
-```powershell
 cd apps-script
-clasp create --type standalone --title "Digital QC - Test Server"
-```
-
-Sau lệnh này clasp tạo `.clasp.json` có `scriptId`. File này đã được bỏ qua bởi Git vì mỗi máy/môi trường có thể dùng project khác nhau.
-
-`clasp create` có thể tải manifest mặc định và thay đổi `appsscript.json` local. Hãy giữ lại manifest của repo với múi giờ `Asia/Ho_Chi_Minh` và các scope Drive/Sheets trước khi `clasp push`; nếu không, số QC và thời gian ghi log có thể bị lệch.
-
-Nếu muốn tạo project trong một thư mục Drive cụ thể, dùng thêm `--parentId FOLDER_ID`.
-
-## 3. Push source lên Google
-
-```powershell
+clasp create --type standalone --title "Digital QC Production"
 clasp push
 clasp open-script
 ```
 
-Trong Apps Script editor, chọn hàm `setupTestEnvironment` rồi bấm **Run** một lần. Hàm này sẽ tự tạo:
+Manifest đã bật Advanced Drive service v3. Nếu Google Cloud project liên kết yêu cầu, hãy bật thêm Google Drive API trong Cloud Console.
 
-- thư mục Drive `Digital QC - Test Files`;
-- spreadsheet `Digital QC - Test Upload Log`;
-- sheet `UPLOAD_LOG` với dòng tiêu đề;
-- Script Properties cho `DRIVE_FOLDER_ID`, `LOG_SPREADSHEET_ID`, `ENFORCE_AUTH=false`.
+## 4. Cấu hình Script Properties
 
-Hàm này chỉ dành cho project test. Không chạy trong project production nếu chưa kiểm tra lại tài khoản Drive và spreadsheet đích.
-
-Sau khi chạy, kiểm tra mục **Project Settings → Script properties**. Không đưa các giá trị này vào Git.
-
-## 4. Deploy Web App
-
-Trong Apps Script editor:
-
-1. **Deploy → New deployment**.
-2. Chọn loại **Web app**.
-3. **Execute as:** `Me` (chủ project).
-4. **Who has access:** chọn phạm vi phù hợp môi trường test, thường là `Anyone` hoặc tài khoản trong domain.
-5. Bấm **Deploy** và copy URL kết thúc bằng `/exec`.
-
-URL đúng có dạng:
+Trong `Project Settings → Script properties`, thêm:
 
 ```text
-https://script.google.com/macros/s/AKfycb.../exec
+DRIVE_FOLDER_ID=<ID thư mục trong Shared Drive>
+LOG_SPREADSHEET_ID=<ID spreadsheet log>
+ALLOWED_USERS_SHEET_ID=<ID spreadsheet allowlist>
+ALLOWED_USERS_SHEET_NAME=ALLOWED_USERS
+OAUTH_CLIENT_ID=<cùng Desktop Client ID với VITE_GOOGLE_OAUTH_CLIENT_ID>
+GOOGLE_WORKSPACE_DOMAIN=company.com
+ENFORCE_AUTH=true
+REQUIRE_SHARED_DRIVE=true
+RATE_LIMIT_PER_MINUTE=5
+MAX_BYTES=20971520
+MAX_REQUEST_BYTES=31457280
+GLOBAL_DAILY_FILE_LIMIT=1000
+GLOBAL_DAILY_BYTE_LIMIT=10737418240
 ```
 
-Không dùng URL editor dạng `https://script.google.com/d/SCRIPT_ID/edit` và không để nguyên chữ `DEPLOYMENT_ID`.
+`GOOGLE_WORKSPACE_DOMAIN` có thể bỏ trống nếu cho phép tài khoản ngoài domain nhưng vẫn bắt buộc phải có trong allowlist.
 
-Có thể deploy bằng clasp sau khi đã tạo deployment đầu tiên:
+## 5. Khởi tạo allowlist và kiểm tra Drive
+
+Từ PowerShell trong thư mục `apps-script`, chạy bằng tài khoản quản trị đã đăng nhập với `clasp`:
 
 ```powershell
-clasp deploy --description "Digital QC test server"
-clasp deployments
+clasp run setupAccessControlForCurrentUser
 ```
 
-Sau mọi thay đổi source:
+Hàm lấy email từ Drive API, tạo/kiểm tra sheet `ALLOWED_USERS` và thêm quản trị viên đầu tiên. Execution API trong manifest dùng `MYSELF`, nên chỉ tài khoản `clasp` của bạn được gọi. Sau đó chỉnh các dòng theo schema:
 
-```powershell
-clasp push
+| Cột | Giá trị |
+|---|---|
+| `email` | email viết thường |
+| `role` | `admin`, `uploader` hoặc `viewer` |
+| `active` | `TRUE` để cho phép |
+| `daily_file_limit` | số file tối đa/ngày của tài khoản |
+| `daily_byte_limit` | tổng byte tối đa/ngày của tài khoản |
+
+Chạy tiếp:
+
+```javascript
+verifyStorageConfiguration()
 ```
 
-Nếu dùng deployment có sẵn, cần tạo version/deployment mới trong Apps Script để URL `/exec` chạy code mới.
+Kết quả phải có `valid: true`, `sharedDriveId` khác rỗng và `canAddChildren: true`.
 
-## 5. Test endpoint trước khi nối app
+## 6. Deploy Web App
 
-Từ thư mục `apps-script`:
+1. `Deploy → New deployment → Web app`.
+2. `Execute as`: tài khoản triển khai.
+3. Chọn phạm vi truy cập cho phép app native gọi endpoint. Nếu phải chọn `Anyone`, lớp nghiệp vụ vẫn bắt buộc token vì `ENFORCE_AUTH=true`.
+4. Copy URL kết thúc bằng `/exec`.
+
+Ứng dụng chỉ chấp nhận URL dạng:
+
+```text
+https://script.google.com/macros/s/DEPLOYMENT_ID/exec
+```
+
+Mỗi lần cập nhật source phải `clasp push` và cập nhật version/deployment để `/exec` chạy code mới.
+
+## 7. Nghiệm thu
+
+1. Build/chạy Tauri; màn hình đăng nhập phải chặn toàn bộ workspace.
+2. Đăng nhập bằng tài khoản không có trong allowlist: `FORBIDDEN`.
+3. Đăng nhập bằng `viewer`: ping thành công nhưng upload bị từ chối.
+4. Đăng nhập bằng `uploader`: upload thành công, file nằm đúng `YYYY/MM/DD`, log có `uploaded_by`.
+5. Hạ `daily_file_limit` xuống `1`, upload lần hai phải trả `USER_DAILY_QUOTA`.
+6. Gửi quá nhanh phải trả `RATE_LIMITED`.
+7. Bật link `Anyone` hoặc dùng thư mục My Drive, `verifyStorageConfiguration()` phải thất bại.
+8. Đăng xuất, upload/retry outbox phải yêu cầu đăng nhập lại.
+
+Với project test riêng, có thể chạy `setupTestEnvironment()`; hàm này cố ý đặt `ENFORCE_AUTH=false` và `REQUIRE_SHARED_DRIVE=false`. Tuyệt đối không dùng cấu hình test cho production.
+
+Kiểm tra endpoint test không bật auth:
 
 ```powershell
 .\test-webapp.ps1 -Endpoint "https://script.google.com/macros/s/DEPLOYMENT_ID/exec" -Mode all
 ```
 
-Script sẽ lần lượt kiểm tra ping, upload, trùng `request_id` và các lỗi validation. Kết quả upload phải xuất hiện trong thư mục Drive và dòng `UPLOAD_LOG`.
-
-Các mode kiểm tra mở rộng:
+Nếu endpoint bật auth, truyền ID token ngắn hạn:
 
 ```powershell
-.\test-webapp.ps1 -Endpoint "https://script.google.com/macros/s/DEPLOYMENT_ID/exec" -Mode duplicate
-.\test-webapp.ps1 -Endpoint "https://script.google.com/macros/s/DEPLOYMENT_ID/exec" -Mode validation
-.\test-webapp.ps1 -Endpoint "https://script.google.com/macros/s/DEPLOYMENT_ID/exec" -Mode concurrency
-.\test-webapp.ps1 -Endpoint "https://script.google.com/macros/s/DEPLOYMENT_ID/exec" -Mode near-limit
+.\test-webapp.ps1 -Endpoint "https://script.google.com/macros/s/DEPLOYMENT_ID/exec" -Mode ping -IdToken "<ID_TOKEN>"
 ```
 
-`near-limit` tạo và upload file khoảng 19 MiB nên chỉ chạy khi chấp nhận dùng quota Drive test. Lỗi ghi Drive/Sheet cần kiểm tra bằng một project/folder/sheet test có ID sai hoặc quyền bị thu hồi; không cố tình chạy trên production.
+## 8. Giới hạn bảo mật cần biết
 
-Sau đó mở app Digital QC, bấm cấu hình server trên topbar, dán đúng URL `/exec`, bấm **Kiểm tra kết nối**, rồi mới thử gửi hồ sơ thật.
-
-## 6. Xử lý lỗi thường gặp
-
-- `CONFIG_MISSING`: chưa chạy `setupTestEnvironment` hoặc Script Properties sai ID.
-- `403` khi deploy: tài khoản chạy Web App chưa có quyền tạo file trong Drive/Sheet.
-- `ping` thành công nhưng upload lỗi: kiểm tra quota Drive, kích thước PDF và log `ERROR_LOG`.
-- Code mới chưa chạy: `clasp push` chỉ cập nhật source; hãy tạo version/deployment mới hoặc cập nhật deployment hiện có.
-- Không dùng URL `/dev` trong app desktop; `/dev` chỉ dành cho chủ project và thử nhanh trong editor.
-
-## 7. Bật xác thực sau khi test contract
-
-Hiện test server dùng `ENFORCE_AUTH=false`. Chỉ bật xác thực sau khi đã có OAuth client và danh sách email:
-
-```text
-ENFORCE_AUTH=true
-OAUTH_CLIENT_ID=...
-ALLOWED_USERS_SHEET_ID=...
-ALLOWED_USERS_SHEET_NAME=ALLOWED_USERS
-```
-
-Sheet `ALLOWED_USERS` cần có email ở cột A, bắt đầu từ dòng 2. Client Tauri chưa có OAuth PKCE và kho token hệ điều hành, vì vậy chưa được phép bật `ENFORCE_AUTH=true` trên endpoint mà app đang dùng. Đây là điều kiện bắt buộc trước production.
+- OAuth Client ID không phải secret; bảo mật dựa trên PKCE, token Google, kiểm tra audience/domain/allowlist và quyền Drive.
+- ID token ngắn hạn chỉ nằm trong RAM; refresh token nằm trong Windows Credential Manager.
+- Rate limit dùng Apps Script Cache + Lock và quota ngày dùng `UPLOAD_LOG`. Đây là lớp chống lạm dụng nghiệp vụ, không phải hệ thống chống DDoS ở tầng mạng.
+- Shared Drive Restricted bảo vệ file ngay cả khi URL/QR bị lộ; người quét vẫn phải đăng nhập tài khoản được cấp quyền Drive.
+- Quản trị viên Workspace vẫn cần tự tạo Shared Drive, OAuth client và cấp quyền thật; source code không thể tự cấp các quyền tổ chức này.

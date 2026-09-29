@@ -6,7 +6,9 @@ param(
   [ValidateSet("ping", "upload", "duplicate", "validation", "concurrency", "near-limit", "all")]
   [string]$Mode = "all",
 
-  [string]$RequestId
+  [string]$RequestId,
+
+  [string]$IdToken
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,6 +23,9 @@ function Invoke-DigitalQcRequest {
     [switch]$AllowFailure
   )
 
+  if ($IdToken) {
+    $Body.auth = @{ id_token = $IdToken }
+  }
   $json = $Body | ConvertTo-Json -Depth 10 -Compress
   try {
     $result = Invoke-RestMethod -Method Post -Uri $Endpoint -ContentType "application/json" -Body $json
@@ -59,6 +64,7 @@ function New-UploadBody {
     data = @{
       request_id = $UploadRequestId
       product_key = "CLASP-TEST-001"
+      qc_record_id = "QC-CLASP-$UploadRequestId"
       project = "DIGITAL-QC-TEST"
       po = "PO-CLASP-TEST"
       part_no = "CLASP-TEST-001"
@@ -137,7 +143,9 @@ if ($Mode -eq "concurrency") {
   Write-Host "`n[concurrency] same request_id from two clients" -ForegroundColor Yellow
   $pdfBytes = New-SmallPdfBytes
   $requestId = "clasp-concurrent-" + [Guid]::NewGuid().ToString("N")
-  $json = (New-UploadBody $requestId $pdfBytes | ConvertTo-Json -Depth 10 -Compress)
+  $body = New-UploadBody $requestId $pdfBytes
+  if ($IdToken) { $body.auth = @{ id_token = $IdToken } }
+  $json = ($body | ConvertTo-Json -Depth 10 -Compress)
   $jobs = 1..2 | ForEach-Object {
     Start-Job -ScriptBlock {
       param($Uri, $JsonBody)

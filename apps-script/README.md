@@ -1,35 +1,52 @@
 # Digital QC Apps Script
 
-> Hướng dẫn đầy đủ cho `clasp`, tạo project, khởi tạo tài nguyên test và kiểm tra Web App nằm trong [`SETUP.md`](./SETUP.md).
+Backend nhận đúng PDF đã preview từ ứng dụng desktop, xác thực tài khoản Google, lưu file vào Shared Drive theo `YYYY/MM/DD` và ghi chỉ mục vào `UPLOAD_LOG`.
 
-Bộ khung server cho hợp đồng API của Digital QC. Server xử lý từng hồ sơ sản phẩm độc lập:
+Hướng dẫn cấu hình production đầy đủ nằm trong [SETUP.md](./SETUP.md).
 
-`PDF bytes + product metadata → một file Drive + một dòng UPLOAD_LOG`
+## Bảo mật đang áp dụng
 
-## Script Properties bắt buộc
+- Mặc định `ENFORCE_AUTH=true`; mọi `ping` và upload phải có Google ID token hợp lệ.
+- Token phải đúng `OAUTH_CLIENT_ID`, còn hạn, có email đã xác minh và đúng `GOOGLE_WORKSPACE_DOMAIN` nếu được cấu hình.
+- Email phải có trong sheet `ALLOWED_USERS` và đang hoạt động.
+- Vai trò `admin` và `uploader` được upload; `viewer` chỉ xác thực/ping.
+- Giới hạn request/phút, số file/ngày và byte/ngày được kiểm tra trước khi ghi Drive.
+- `request_id` trùng chỉ được trả lại cho chính người upload hoặc `admin`.
+- Mặc định `REQUIRE_SHARED_DRIVE=true`; thư mục có quyền `anyone` hoặc `domain` bị từ chối.
+- PDF được kiểm tra kích thước, chữ ký `%PDF-` và SHA-256.
 
-Trong Apps Script, mở `Project Settings → Script properties` và thêm:
+## Sheet `ALLOWED_USERS`
 
-- `DRIVE_FOLDER_ID`: thư mục Drive dùng để lưu PDF.
+| email | role | active | daily_file_limit | daily_byte_limit |
+|---|---|---:|---:|---:|
+| `admin@company.com` | `admin` | `TRUE` | `200` | `1073741824` |
+| `qc@company.com` | `uploader` | `TRUE` | `100` | `524288000` |
+| `viewer@company.com` | `viewer` | `TRUE` | `10` | `10485760` |
+
+`daily_file_limit` và `daily_byte_limit` trống hoặc không hợp lệ sẽ dùng mặc định trong `Config.gs`.
+
+## Script Properties
+
+Bắt buộc cho production:
+
+- `DRIVE_FOLDER_ID`: ID thư mục gốc bên trong Shared Drive Restricted.
 - `LOG_SPREADSHEET_ID`: spreadsheet chứa `UPLOAD_LOG`.
+- `ALLOWED_USERS_SHEET_ID`: spreadsheet chứa `ALLOWED_USERS`; có thể dùng cùng ID với log.
+- `OAUTH_CLIENT_ID`: OAuth 2.0 Desktop Client ID dùng bởi ứng dụng Tauri.
+- `ENFORCE_AUTH=true`.
+- `REQUIRE_SHARED_DRIVE=true`.
 
-## Xác thực
+Khuyến nghị:
 
-Mặc định `ENFORCE_AUTH=false` để có thể kiểm tra contract ở môi trường thử nghiệm. Trước khi dùng thật:
+- `GOOGLE_WORKSPACE_DOMAIN=company.com`.
+- `RATE_LIMIT_PER_MINUTE=5`.
+- `MAX_BYTES=20971520`.
+- `MAX_REQUEST_BYTES=31457280`.
+- `GLOBAL_DAILY_FILE_LIMIT=1000`.
+- `GLOBAL_DAILY_BYTE_LIMIT=10737418240`.
 
-- đặt `ENFORCE_AUTH=true`;
-- đặt `OAUTH_CLIENT_ID` đúng OAuth client của ứng dụng;
-- đặt `ALLOWED_USERS_SHEET_ID` tới spreadsheet có sheet `ALLOWED_USERS`, email nằm ở cột A từ dòng 2;
-- chia sẻ thư mục Drive và spreadsheet cho tài khoản thực thi Web App.
+Không commit Script Properties, token hoặc thông tin production vào repository.
 
-Không commit các giá trị Script Properties, token hoặc ID môi trường production vào repository nếu repository được chia sẻ.
+## Lưu ý vận hành
 
-## Deploy thử nghiệm
-
-1. Tạo một Apps Script project riêng cho môi trường thử nghiệm.
-2. Chép `Code.gs`, `Config.gs` và `appsscript.json` vào project.
-3. Cấu hình Script Properties bằng thư mục Drive và spreadsheet thử nghiệm.
-4. Deploy `Web app`, execute as chủ sở hữu project.
-5. Dùng URL `/exec` cho bước kiểm tra `ping` và upload một PDF nhỏ.
-
-`Code.gs` không sinh PDF và không ghép PDF. Client phải gửi đúng bytes PDF đã preview. `request_id` được dùng để chống tạo file trùng khi retry.
+Web App vẫn cần nhận request từ ứng dụng native, vì vậy lớp transport có thể được deploy ở chế độ `Anyone`; quyền nghiệp vụ không phải anonymous: `doPost` luôn xác minh ID token và allowlist. Rate limit trong Apps Script giúp chặn lạm dụng theo tài khoản nhưng không thay thế WAF/DDoS protection ở biên mạng. Nếu hệ thống mở ra Internet hoặc tải lớn, nên chuyển API trước Apps Script sang Cloud Run/API Gateway + Cloud Armor.
