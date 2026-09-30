@@ -59,9 +59,30 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       <div class="topbar-actions">
         <button id="authAccount" class="auth-account" type="button" title="Đăng xuất Google" hidden><span id="authAvatar" class="auth-avatar">G</span><span><strong id="authName">Google</strong><small id="authEmail"></small></span><span class="auth-signout">Đăng xuất</span></button>
         <button id="serverStatus" class="connection-pill" type="button" aria-haspopup="dialog" aria-label="Cấu hình server upload"><i></i><span id="serverStatusText">Chưa cấu hình server</span></button>
-        <button class="icon-button" type="button" aria-label="Mở hướng dẫn">${icon("help")}</button>
+        <button id="openHelp" class="icon-button" type="button" aria-label="Mở hướng dẫn sử dụng">${icon("help")}</button>
       </div>
     </header>
+
+    <dialog id="helpDialog" class="help-dialog" aria-labelledby="helpDialogTitle">
+      <div class="help-dialog__body">
+        <div class="help-dialog__header">
+          <div><span class="eyebrow">DIGITAL QC GUIDE</span><h2 id="helpDialogTitle">Hướng dẫn sử dụng</h2><p>Quy trình từ nhập sản phẩm đến upload hồ sơ và in tem QR.</p></div>
+          <button id="closeHelp" class="icon-button" type="button" aria-label="Đóng hướng dẫn">${icon("close")}</button>
+        </div>
+        <div class="help-dialog__content">
+          <details open><summary>1. Bắt đầu và đăng nhập</summary><div><p>Mở ứng dụng, chọn <strong>Đăng nhập bằng Google</strong> và dùng đúng tài khoản đã được cấp trong <code>ALLOWED_USERS</code>. Mật khẩu Google không được ứng dụng lưu lại.</p><p>Nếu modal đăng nhập không đóng, kiểm tra tài khoản, OAuth Client ID, Internet rồi khởi động lại ứng dụng.</p></div></details>
+          <details><summary>2. Cấu hình server upload</summary><div><p>Bấm trạng thái server ở góc trên bên phải, dán URL Web App có đuôi <code>/exec</code>, chọn <strong>Kiểm tra kết nối</strong> rồi <strong>Lưu cấu hình</strong>.</p><p>Không dùng URL <code>/dev</code>. Nếu kiểm tra lỗi, kiểm tra deployment Apps Script, quyền Shared Drive và danh sách email được phép.</p></div></details>
+          <details><summary>3. Nhập sản phẩm</summary><div><p>Có thể nhập trực tiếp trên bảng hoặc dán nhiều dòng từ Excel. Dữ liệu Excel cần 9 cột theo thứ tự: <strong>Mã dự án, PO, Mã NCC, Mã hàng, Tên hàng, Số lượng, ĐVT, Số phiếu NK, Ngày NK</strong>.</p><p>Sau khi chọn <strong>Nạp danh sách</strong>, chọn card sản phẩm cần làm hồ sơ. Sản phẩm đã gửi sẽ chuyển sang Document Library.</p></div></details>
+          <details><summary>4. Nhập kiểm tra và mã hồ sơ QC</summary><div><p>Nhập người kiểm tra, ngày kiểm tra, cấp độ, số lượng lỗi và nội dung lỗi. Mã hồ sơ QC được tạo duy nhất; dùng nút làm mới nếu cần tạo mã mới trước khi gửi.</p></div></details>
+          <details><summary>5. Nhập tiêu chuẩn và kết quả đo</summary><div><p>Hàng <strong>Thông số chuẩn</strong> nằm đầu bảng. Với từng V1–V7, nhập giá trị chuẩn, sai số âm và sai số dương trước khi nhập mẫu đo.</p><p>Ứng dụng tự đánh giá <strong>Đạt</strong>, <strong>Không đạt</strong> hoặc <strong>Chưa đủ dữ liệu</strong>. Chọn <strong>Thêm dòng đo</strong> để thêm mẫu.</p></div></details>
+          <details><summary>6. Thêm PDF và tạo preview</summary><div><p>Kéo thả hoặc chọn nhiều bản vẽ PDF. Sau đó chọn <strong>Tạo preview PDF</strong> để ghép phiếu QC ở trước bản vẽ.</p><p>Kiểm tra thông tin sản phẩm, mã QC, kết quả đo, số trang và bản vẽ trước khi gửi. Nút <strong>Tải PDF</strong> cho phép kiểm tra file trên máy.</p></div></details>
+          <details><summary>7. Upload và Document Library</summary><div><p>Chỉ upload sau khi đã đăng nhập, server online và preview hợp lệ. Sau khi thành công, hồ sơ có mã file, link Drive, QR và lịch sử in.</p><p>Document Library hỗ trợ tìm theo mã hàng, PO, mã QC hoặc document ID. <strong>Mở</strong> để xem Drive, <strong>In tem</strong> để mở giao diện in.</p></div></details>
+          <details><summary>8. In tem QR</summary><div><p>Chọn dòng máy in, form tem, số bản in rồi kiểm tra preview. Ứng dụng hỗ trợ các khổ A4, 100×50, 80×50, 100×30, 70×30, 62×29 và 50×30 mm.</p><p>Trong driver máy in, chọn đúng paper size và tắt <code>Fit to page</code> khi in tem cuộn. Nên in thử một tem và calibration trước khi in hàng loạt.</p></div></details>
+          <details><summary>9. Nội dung QR và bảo mật</summary><div><p>QR có 9 trường phân cách bằng dấu phẩy: <strong>Mã dự án, Mã hàng, Số lượng, Mã NCC, Số phiếu NK, Ngày NK, Mã PO, Mã hồ sơ QC, Link PDF</strong>.</p><p>QR không làm file công khai. Người quét vẫn phải có quyền xem trên Shared Drive Restricted.</p></div></details>
+        </div>
+        <div class="help-dialog__footer"><span class="help-doc-link">Tài liệu đầy đủ: docs/USER_GUIDE.md</span><button id="closeHelpFooter" class="secondary" type="button">Đóng</button></div>
+      </div>
+    </dialog>
 
     <div class="app-layout">
       <aside class="sidebar" aria-label="Tiến trình hồ sơ">
@@ -190,6 +211,7 @@ function icon(name: string): string {
     paste: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M8 9h8M8 13h5"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     chevron: '<path d="m6 9 6 6 6-6"/>',
+    close: '<path d="m6 6 12 12M18 6 6 18"/>',
   };
   return `<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] ?? paths.info}</svg>`;
 }
@@ -1118,7 +1140,15 @@ function openServerConfig(): void {
   requestAnimationFrame(() => endpoint.focus());
 }
 
+function openHelp(): void {
+  const dialog = document.querySelector<HTMLDialogElement>("#helpDialog");
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
 document.querySelector<HTMLButtonElement>("#serverStatus")!.addEventListener("click", openServerConfig);
+document.querySelector<HTMLButtonElement>("#openHelp")?.addEventListener("click", openHelp);
+document.querySelector<HTMLButtonElement>("#closeHelp")?.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#helpDialog")?.close());
+document.querySelector<HTMLButtonElement>("#closeHelpFooter")?.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#helpDialog")?.close());
 document.querySelector<HTMLButtonElement>("#googleSignIn")!.addEventListener("click", async () => {
   if (isAuthenticating || !GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET) return;
   isAuthenticating = true;

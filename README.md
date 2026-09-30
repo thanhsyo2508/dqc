@@ -14,7 +14,7 @@ Màn hình tạo hồ sơ vẫn giữ nguyên nguyên tắc một sản phẩm �
 - Dữ liệu nháp và preview chỉ tồn tại trong phiên làm việc; local storage chỉ tự động giữ metadata của hồ sơ sau khi upload thành công.
 - Nút `Gửi hồ sơ` upload đúng PDF preview theo từng card; URL Web App `/exec` được nhập trong cấu hình server trên topbar.
 - Khi server trả thành công, metadata được tự động đưa vào `DOCUMENT LIBRARY`; event upload có correlation theo `documentId`/`requestId` để không nhầm mã hàng.
-- QR được lưu cùng hồ sơ upload dưới dạng JSON compact gồm mã dự án, NCC, số lượng, đơn vị tính, mã hàng, tên hàng, phiếu nhập, ngày nhập kho, PO và `pdf_url`, kèm số lần in, thời điểm in, mẫu tem và profile máy in; có thể mở lại từ Document Library.
+- QR được lưu cùng hồ sơ upload dưới dạng chuỗi 9 trường phân tách bằng dấu phẩy: mã dự án, mã hàng, số lượng, mã NCC, số phiếu nhập kho, ngày nhập kho, mã PO, mã hồ sơ QC và link PDF; có thể mở lại từ Document Library.
 - Form `In tem QR` hỗ trợ mẫu A4, Zebra/Godex 100×50 mm, Brother 62×29 mm và máy in văn phòng generic; hộp thoại in Windows vẫn là nơi chọn thiết bị thực tế.
 - Có nút `Kiểm tra kết nối` gửi `ping` tới Web App, hiển thị trạng thái loading/thành công/lỗi trước khi upload.
 - Workspace được khóa cho tới khi đăng nhập Google bằng trình duyệt hệ thống; refresh token được giữ trong Windows Credential Manager và mọi upload đều bắt buộc xác thực.
@@ -69,6 +69,7 @@ Lưu ý: cần chọn ít nhất một file PDF bản vẽ trong UI để tạo 
 
 ## Tài liệu dự án
 
+- `docs/USER_GUIDE.md` — hướng dẫn sử dụng từ đăng nhập, nhập dữ liệu, upload PDF đến in tem QR.
 - `KIEN_TRUC_CHI_TIET_DIGITAL_QC.md` — kiến trúc và lộ trình.
 - `CHANGELOG.md` — lịch sử thay đổi.
 - `EXPERIENCE.md` — bài học, quyết định và các lỗi cần tránh.
