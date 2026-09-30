@@ -8,7 +8,7 @@ import { createQcSheetPdf } from "./pdf/qc-sheet.js";
 import { loadVietnameseFont } from "./pdf/vietnamese-font.js";
 import { pingServer, uploadProductPdf } from "./api/upload-client.js";
 import { isTauriRuntime, listQueuedPdfs, loginWithGoogle, logoutGoogle, restoreGoogleSession, retryQueuedPdfs, type AuthSession } from "./api/tauri-bridge.js";
-import { createQrDataUrl, getLabelTemplate, getPrinterProfile, labelMarkup, LABEL_TEMPLATES, PRINTER_PROFILES, printSheetHtml } from "./print/label-print.js";
+import { createQrDataUrl, getLabelTemplate, getPrinterProfile, labelPreviewMarkup, LABEL_TEMPLATES, PRINTER_PROFILES, printSheetHtml } from "./print/label-print.js";
 
 let previewUrl: string | undefined;
 let previewBytes: Uint8Array | undefined;
@@ -1085,8 +1085,7 @@ async function renderLabelPreview(): Promise<void> {
   preview.innerHTML = `<div class="label-preview-loading">Đang dựng preview QR…</div>`;
   const qrDataUrl = await createQrDataUrl(current.uploaded.qr.payload, 320);
   if (renderKey !== `${printingDocumentId}:${templateSelect.value}:${profileSelect.value}`) return;
-  const qrPercent = `${(template.qrSizeMm / template.labelWidthMm) * 100}%`;
-  preview.innerHTML = `<div class="label-preview-sheet"><div class="label-preview-real" style="--preview-qr-width:${qrPercent}; aspect-ratio:${template.labelWidthMm} / ${template.labelHeightMm};">${labelMarkup(current, template, qrDataUrl)}</div><small class="label-preview-note">Preview đúng tỷ lệ ${template.labelWidthMm} × ${template.labelHeightMm} mm · nội dung sẽ được cắt gọn nếu vượt chiều rộng tem</small></div>`;
+  preview.innerHTML = `<div class="label-preview-sheet"><div class="label-preview-real" style="display:block;width:min(100%,560px);aspect-ratio:${template.labelWidthMm} / ${template.labelHeightMm};overflow:hidden;background:#fff;">${labelPreviewMarkup(current, template, qrDataUrl)}</div><small class="label-preview-note">Preview đúng tỷ lệ ${template.labelWidthMm} × ${template.labelHeightMm} mm · bố cục và tỷ lệ QR mô phỏng bản in thực tế</small></div>`;
 }
 
 function openLabelPrint(documentId: string): void {

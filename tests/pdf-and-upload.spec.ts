@@ -9,7 +9,7 @@ import { evaluateMeasurementRow, createUniqueQcRecordId, productKey, type Produc
 import { createQcSheetPdf } from "../src/pdf/qc-sheet.js";
 import { mergeProductPdf } from "../src/pdf/merge.js";
 import { pingServer, uploadProductPdf } from "../src/api/upload-client.js";
-import { createQrDataUrl, getLabelTemplate, printSheetHtml } from "../src/print/label-print.js";
+import { LABEL_TEMPLATES, createQrDataUrl, getLabelTemplate, labelMarkup, labelPreviewMarkup, printSheetHtml } from "../src/print/label-print.js";
 
 const sampleQc: ProductQc = {
   recordId: "QC-TEST-0001",
@@ -188,19 +188,18 @@ describe("product QC PDF pipeline", () => {
   it("persists the QR payload and print history with the product document", () => {
     const document = createInternalDocument(sampleQc.product, 1);
     markDocumentUploaded(document, { openUrl: "https://drive.google.com/file/d/FILE_ID/view", sentAt: "2026-09-24T10:00:00.000Z" });
-    const qrPayload = JSON.parse(document.uploaded?.qr?.payload ?? "{}") as Record<string, unknown>;
-    expect(qrPayload.type).toBe("digital-qc");
-    expect(qrPayload.version).toBe(1);
-    expect(qrPayload.project).toBe(sampleQc.product.project);
-    expect(qrPayload.supplier).toBe(sampleQc.product.supplier);
-    expect(qrPayload.quantity).toBe(sampleQc.product.quantity);
-    expect(qrPayload.unit).toBe(sampleQc.product.unit);
-    expect(qrPayload.part_no).toBe(sampleQc.product.partNo);
-    expect(qrPayload.product_name).toBe(sampleQc.product.productName);
-    expect(qrPayload.slip_no).toBe(sampleQc.product.slipNo);
-    expect(qrPayload.received_date).toBe(sampleQc.product.receivedDate);
-    expect(qrPayload.po).toBe(sampleQc.product.po);
-    expect(qrPayload.pdf_url).toBe("https://drive.google.com/file/d/FILE_ID/view");
+    const qrPayload = document.uploaded?.qr?.payload.split(",");
+    expect(qrPayload).toEqual([
+      sampleQc.product.project,
+      sampleQc.product.partNo,
+      String(sampleQc.product.quantity),
+      sampleQc.product.supplier,
+      sampleQc.product.slipNo,
+      sampleQc.product.receivedDate,
+      sampleQc.product.po,
+      document.qc.recordId,
+      "https://drive.google.com/file/d/FILE_ID/view",
+    ]);
     expect(document.uploaded?.qr?.printCount).toBe(0);
 
     markQrPrinted(document, "a4-3x8", "windows-system");
@@ -210,24 +209,90 @@ describe("product QC PDF pipeline", () => {
     expect(restored.uploaded?.qr?.printerProfileId).toBe("windows-system");
   });
 
-  it("builds a compact JSON QR payload with product metadata and PDF URL", () => {
+  it("builds a comma-separated QR payload with the required field order", () => {
     const document = createInternalDocument(sampleQc.product, 1);
-    const payload = JSON.parse(createQrPayload(document, "https://example.test/file.pdf"));
-    expect(payload).toMatchObject({
-      type: "digital-qc",
-      version: 1,
-      part_no: sampleQc.product.partNo,
-      pdf_url: "https://example.test/file.pdf",
-    });
+    const payload = createQrPayload(document, "https://example.test/file.pdf");
+    expect(payload).toBe([
+      sampleQc.product.project,
+      sampleQc.product.partNo,
+      String(sampleQc.product.quantity),
+      sampleQc.product.supplier,
+      sampleQc.product.slipNo,
+      sampleQc.product.receivedDate,
+      sampleQc.product.po,
+      document.qc.recordId,
+      "https://example.test/file.pdf",
+    ].join(","));
+    expect(payload.trimStart().startsWith("{")).toBe(false);
+  });
+
+  it("keeps the comma-separated QR payload parseable when input contains commas", () => {
+    const document = createInternalDocument({ ...sampleQc.product, project: "SALES,AGV", po: "PO,001" }, 1);
+    expect(createQrPayload(document, "https://example.test/file.pdf").split(",")).toHaveLength(9);
   });
 
   it("builds a multi-copy print sheet for a selected label template", () => {
     const document = createInternalDocument(sampleQc.product, 1);
-    markDocumentUploaded(document, { openUrl: "https://example.test/qc/1" });
+    markDocumentUploaded(document, { qcNo: "QC-SERVER-0001", openUrl: "https://example.test/qc/1" });
     const html = printSheetHtml(document, getLabelTemplate("roll-100x50"), 2, "data:image/png;base64,QR");
-    expect((html.match(/class=\"label\"/g) ?? [])).toHaveLength(2);
+    expect((html.match(/class=\"qc-label\"/g) ?? [])).toHaveLength(2);
     expect(html).toContain("100mm 50mm");
     expect(html).toContain("2410011-FR1-014");
+    expect(html).toContain(`HS QC: ${document.qc.recordId}`);
+    expect(html).not.toContain("QC-SERVER-0001");
+    expect(html).toContain("09/Sep/2026");
+    expect(html).not.toContain("!important");
+  });
+
+  it("uses a purpose-built readable layout for every label size", () => {
+    const document = createInternalDocument(sampleQc.product, 1);
+    for (const template of LABEL_TEMPLATES) {
+      const html = labelMarkup(document, template, "data:image/png;base64,QR");
+      expect(template.qrSizeMm / template.labelHeightMm).toBeGreaterThanOrEqual(0.6);
+      expect(Object.values(template.metrics).every((value) => value > 0)).toBe(true);
+      expect(html).toContain(`--part-font:${template.metrics.partPt}pt`);
+      expect(html).toContain(`data-layout="${template.layout}"`);
+      expect(html).toContain(sampleQc.product.project);
+      expect(html).toContain(sampleQc.product.partNo);
+      expect(html).toContain(sampleQc.product.supplier);
+      expect(html).toContain(sampleQc.product.productName);
+      expect(html).toContain(sampleQc.product.po);
+      expect(html).toContain(`${sampleQc.product.quantity} ${sampleQc.product.unit}`);
+      expect(html).toContain(`<strong class="qc-label__project">${sampleQc.product.project}</strong><strong class="qc-label__quantity">${sampleQc.product.quantity} ${sampleQc.product.unit}</strong>`);
+      expect(html).toContain(`HS QC: ${document.qc.recordId}`);
+      expect(html).toContain(sampleQc.product.slipNo);
+    }
+    expect(new Set(LABEL_TEMPLATES.map((template) => template.layout))).toEqual(new Set(["part-header", "qr-left", "qr-supplier"]));
+  });
+
+  it("fills the complete QR grid column in the on-screen label preview", async () => {
+    const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+    expect(styles).toMatch(/\.label-preview-real \.qc-label__qr\s*\{[^}]*width:\s*100%;/s);
+  });
+
+  it("renders every preview as a self-contained SVG at the exact label ratio", () => {
+    const document = createInternalDocument(sampleQc.product, 1);
+    for (const template of LABEL_TEMPLATES) {
+      const preview = labelPreviewMarkup(document, template, "data:image/png;base64,QR");
+      expect(preview).toContain(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${template.labelWidthMm * 10} ${template.labelHeightMm * 10}"`);
+      expect(preview).toContain(`<foreignObject x="0" y="0" width="${template.labelWidthMm * 10}" height="${template.labelHeightMm * 10}">`);
+      expect(preview).toContain(`width:${template.qrSizeMm * 10}px`);
+      expect(preview).toContain("display:grid");
+      expect(preview).toContain(`HS QC: ${document.qc.recordId}`);
+      expect(preview.match(/data-field="part-number"/g)).toHaveLength(1);
+    }
+  });
+
+  it("shrinks a long top part number instead of duplicating or clipping it", () => {
+    const template = getLabelTemplate("roll-50x30");
+    const document = createInternalDocument({ ...sampleQc.product, partNo: "LONG-PART-NUMBER-123456789-ABCDEFGHIJ" }, 1);
+    const printLabel = labelMarkup(document, template, "data:image/png;base64,QR");
+    const bannerFont = Number(/--part-banner-font:([\d.]+)pt/.exec(printLabel)?.[1]);
+    const preview = labelPreviewMarkup(document, template, "data:image/png;base64,QR");
+
+    expect(bannerFont).toBeLessThan(template.metrics.partPt);
+    expect(preview.match(/data-field="part-number"/g)).toHaveLength(1);
+    expect(preview).toContain("white-space:nowrap");
   });
 
   it("generates a QR image from the stored URL payload", async () => {

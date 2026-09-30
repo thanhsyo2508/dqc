@@ -32,21 +32,6 @@ export interface QrRecord {
   printerProfileId?: string;
 }
 
-export interface QrPayload {
-  type: "digital-qc";
-  version: 1;
-  project: string;
-  supplier: string;
-  quantity: number;
-  unit: string;
-  part_no: string;
-  product_name: string;
-  slip_no: string;
-  received_date: string;
-  po: string;
-  pdf_url: string;
-}
-
 function now(): string {
   return new Date().toISOString();
 }
@@ -100,21 +85,21 @@ export interface UploadSuccessRecord {
 
 export function createQrPayload(document: InternalDocument, pdfUrl: string): string {
   const product = document.product;
-  const payload: QrPayload = {
-    type: "digital-qc",
-    version: 1,
-    project: product.project,
-    supplier: product.supplier ?? "",
-    quantity: product.quantity,
-    unit: product.unit,
-    part_no: product.partNo,
-    product_name: product.productName ?? "",
-    slip_no: product.slipNo,
-    received_date: product.receivedDate,
-    po: product.po,
-    pdf_url: pdfUrl,
-  };
-  return JSON.stringify(payload);
+  const field = (value: unknown): string => String(value ?? "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/,/g, " ")
+    .trim();
+  return [
+    product.project,
+    product.partNo,
+    product.quantity,
+    product.supplier,
+    product.slipNo,
+    product.receivedDate,
+    product.po,
+    document.qc.recordId,
+    pdfUrl,
+  ].map(field).join(",");
 }
 
 export function markDocumentUploaded(document: InternalDocument, result: UploadSuccessRecord): InternalDocument {
@@ -170,7 +155,12 @@ export function restoreInternalDocuments(raw: string | null): InternalDocument[]
         },
         uploaded: document.uploaded ? {
           ...document.uploaded,
-          qr: document.uploaded.qr ? { ...document.uploaded.qr, printCount: Number.isFinite(document.uploaded.qr.printCount) ? document.uploaded.qr.printCount : 0 } : (document.uploaded.openUrl ? { payload: createQrPayload({ ...document, uploaded: { ...document.uploaded, openUrl: document.uploaded.openUrl } }, document.uploaded.openUrl), createdAt: document.uploaded.sentAt, printCount: 0 } : undefined),
+          qr: document.uploaded.openUrl ? {
+            ...(document.uploaded.qr ?? {}),
+            payload: createQrPayload({ ...document, uploaded: { ...document.uploaded, openUrl: document.uploaded.openUrl } }, document.uploaded.openUrl),
+            createdAt: document.uploaded.qr?.createdAt ?? document.uploaded.sentAt,
+            printCount: Number.isFinite(document.uploaded.qr?.printCount) ? document.uploaded.qr!.printCount : 0,
+          } : document.uploaded.qr ? { ...document.uploaded.qr, printCount: Number.isFinite(document.uploaded.qr.printCount) ? document.uploaded.qr.printCount : 0 } : undefined,
         } : undefined,
         drawingNames: Array.isArray(document.drawingNames) ? document.drawingNames : [],
         status: document.status === "preview-ready" ? "draft" : document.status,
