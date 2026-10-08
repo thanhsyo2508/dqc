@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { PDFDocument } from "pdf-lib";
+import { degrees, PDFDocument, rgb } from "pdf-lib";
 import { describe, expect, it, vi } from "vitest";
 import { createInternalDocument, createQrPayload, markDocumentUploaded, markQrPrinted, restoreInternalDocuments, serializeInternalDocuments } from "../src/domain/document-store.js";
 import { parseProductPaste } from "../src/domain/paste-excel.js";
@@ -80,6 +80,38 @@ describe("product QC PDF pipeline", () => {
     const merged = await mergeProductPdf(qcPdf, await drawingPdf());
     const pdf = await PDFDocument.load(merged);
     expect(pdf.getPageCount()).toBe(3);
+  });
+
+  it("normalizes every merged drawing page to portrait A4 while preserving artwork orientation", async () => {
+    const drawings = await PDFDocument.create();
+    const addFixture = (width: number, height: number, label: string) => {
+      const page = drawings.addPage([width, height]);
+      page.drawRectangle({ x: 20, y: 20, width: width - 40, height: height - 40, borderColor: rgb(0, 0, 0), borderWidth: 3 });
+      page.drawText(label, { x: width / 2 - (label.length * 5), y: height / 2, size: 20 });
+      return page;
+    };
+    addFixture(1200, 1600, "Oversized portrait");
+    addFixture(1600, 1200, "Oversized landscape");
+    const rotated = addFixture(1200, 1600, "Rotate 90");
+    rotated.setRotation(degrees(90));
+    const rotatedOtherWay = addFixture(1200, 1600, "Rotate 270");
+    rotatedOtherWay.setRotation(degrees(270));
+    addFixture(300, 400, "Small portrait");
+
+    const merged = await mergeProductPdf(await createQcSheetPdf(sampleQc), await drawings.save());
+    const pdf = await PDFDocument.load(merged);
+    const pages = pdf.getPages().slice(1);
+
+    expect(pdf.getPageCount()).toBe(6);
+    for (const page of pages) {
+      expect(page.getWidth()).toBeCloseTo(595.28, 1);
+      expect(page.getHeight()).toBeCloseTo(841.89, 1);
+      expect(page.getRotation().angle).toBe(0);
+    }
+    if (process.env.PDF_QA_OUTPUT) {
+      await mkdir("tmp/pdfs", { recursive: true });
+      await writeFile("tmp/pdfs/portrait-a4-normalized-check.pdf", merged);
+    }
   });
 
   it("embeds Vietnamese text and paginates many measurement rows", async () => {
