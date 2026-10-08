@@ -2,8 +2,9 @@ import { PDFDocument } from "pdf-lib";
 import "./styles.css";
 import { createInternalDocument, documentStatusLabel, markDocumentUploaded, markQrPrinted, restoreInternalDocuments, serializeInternalDocuments, type InternalDocument, type UploadSuccessRecord } from "./domain/document-store.js";
 import { parseProductPaste } from "./domain/paste-excel.js";
+import { matchPdfZip, MAX_PDF_BYTES, normalizePartNo, type ZipMatchIssue, type ZipPdfSource } from "./domain/zip-import.js";
 import { createEmptyMeasurementStandard, createUniqueQcRecordId, evaluateMeasurementRow, productKey, type MeasurementStandard, type Product, type ProductQc } from "./domain/product-qc.js";
-import { mergeProductPdf } from "./pdf/merge.js";
+import { mergeProductPdfs } from "./pdf/merge.js";
 import { createQcSheetPdf } from "./pdf/qc-sheet.js";
 import { loadVietnameseFont } from "./pdf/vietnamese-font.js";
 import { pingServer, uploadProductPdf } from "./api/upload-client.js";
@@ -46,6 +47,17 @@ const sampleProduct: Product = {
 const restoredUploadedDocuments = restoreInternalDocuments(localStorage.getItem(UPLOADED_DOCUMENT_STORAGE_KEY)).filter((document) => Boolean(document.uploaded));
 let uploadedDocuments: InternalDocument[] = restoredUploadedDocuments;
 let documents: InternalDocument[] = [createInternalDocument(sampleProduct, 1)];
+let zipPdfSources = new Map<string, ZipPdfSource>();
+let zipMatchIssues: ZipMatchIssue[] = [];
+let batchZipName = "";
+let batchZipFile: File | undefined;
+let batchZipLoadToken = 0;
+let batchSearchQuery = "";
+let batchIsRunning = false;
+let lastUploadAt = 0;
+let loadedZipDrawingDocumentId: string | undefined;
+let loadedZipDrawing: File | undefined;
+const pendingZipLoads = new Map<string, Promise<File | undefined>>();
 const products: Product[] = [];
 let recentInspectors: string[] = restoreRecentInspectors();
 
@@ -191,6 +203,28 @@ document.querySelector<HTMLInputElement>("#inspector")?.setAttribute("list", "re
 document.querySelector<HTMLInputElement>("#inspector")?.setAttribute("autocomplete", "name");
 document.querySelector<HTMLInputElement>("#inspector")?.insertAdjacentHTML("afterend", `<datalist id="recentInspectors"></datalist>`);
 document.querySelector(".preview-tip")?.insertAdjacentHTML("afterend", `<details id="documentLibrary" class="library-panel"><summary class="library-summary"><span class="library-heading"><span class="library-heading-copy"><span class="eyebrow">DOCUMENT LIBRARY</span><strong>Tài liệu đã upload</strong></span><span id="uploadedCount" class="product-count">0 hồ sơ</span></span><span class="library-toggle" aria-hidden="true">${icon("chevron")}</span></summary><div class="library-content"><p class="library-description">Mở thư viện khi cần xem lại các file upload thành công theo từng mã hàng.</p><div class="library-filters"><label class="library-search-label" for="librarySearch">Mã hàng, PO, mã QC hoặc document ID<input id="librarySearch" type="search" placeholder="Ví dụ: 2410011 hoặc QC-260924" autocomplete="off" /></label><label class="library-date-label" for="libraryFrom">Từ ngày<input id="libraryFrom" type="date" /></label><label class="library-date-label" for="libraryTo">Đến ngày<input id="libraryTo" type="date" /></label></div><div id="uploadedLibrary" class="uploaded-library"></div></div></details>`);
+
+document.querySelector("#productList")?.insertAdjacentHTML("afterend", `<div class="batch-tools"><label class="batch-search-label" for="productSearch">Tìm trong danh sách<input id="productSearch" type="search" placeholder="Tìm mã hàng, tên hàng, PO..." autocomplete="off" /></label><label id="batchZipDropzone" class="batch-zip-dropzone" for="batchZip"><span><strong>${icon("upload")} Gán PDF theo mã hàng từ ZIP</strong><small id="batchZipSummary">Mỗi file PDF trong ZIP cần đặt tên trùng mã hàng, ví dụ HAE-088-3B1-00-MKAC.pdf</small></span><span class="browse-label">Chọn ZIP</span><input id="batchZip" type="file" accept=".zip,application/zip,application/x-zip-compressed" /></label><div id="batchZipIssues" class="batch-zip-issues" hidden></div><div class="batch-actions"><span id="batchProgress" role="status" aria-live="polite">Chưa có ZIP được chọn.</span><button id="runBatchUpload" class="primary" type="button" disabled>${icon("sparkle")} Tạo & gửi các hồ sơ đủ điều kiện</button></div></div>`);
+document.querySelector("#runBatchUpload")?.insertAdjacentHTML("beforebegin", `<button id="addProductRow" class="secondary" type="button">${icon("plus")} Thêm mã hàng</button>`);
+const pageTitle = document.querySelector<HTMLElement>(".page-heading h1");
+const pageDescription = document.querySelector<HTMLElement>(".page-heading p");
+if (pageTitle) pageTitle.textContent = "Xử lý hồ sơ QC theo lô";
+if (pageDescription) pageDescription.textContent = "Nhập nhiều mã hàng, ghép bản vẽ từ ZIP, kiểm tra từng hồ sơ rồi upload lần lượt.";
+const productPanelDescription = document.querySelector<HTMLElement>(".product-panel .panel-heading p");
+if (productPanelDescription) productPanelDescription.textContent = "Dán nhiều dòng Excel; chọn một mã để nhập tiêu chuẩn và kết quả đo riêng.";
+const sourcePanelHeading = document.querySelector<HTMLElement>(".source-panel .panel-heading h2");
+const sourcePanelDescription = document.querySelector<HTMLElement>(".source-panel .panel-heading p");
+if (sourcePanelHeading) sourcePanelHeading.textContent = "PDF thủ công cho một mã";
+if (sourcePanelDescription) sourcePanelDescription.textContent = "Tùy chọn dự phòng; xử lý hàng loạt thì dùng ZIP ở bảng mã hàng phía trên.";
+const usageSteps = document.querySelectorAll<HTMLDetailsElement>("#helpDialog .help-dialog__content details");
+if (usageSteps[2]) {
+  usageSteps[2].querySelector("summary")!.textContent = "3. Nhập danh sách nhiều mã hàng";
+  usageSteps[2].querySelector("div")!.innerHTML = "<p>Dán 9 cột từ Excel theo thứ tự: Mã dự án, PO, Mã NCC, Mã hàng, Tên hàng, Số lượng, ĐVT, Số phiếu NK, Ngày NK. Bấm Nạp danh sách, sau đó tìm và chọn từng mã để nhập thông tin QC riêng.</p><p>Bảng hiển thị tình trạng ghép PDF và trạng thái hồ sơ; dùng ô tìm kiếm để lọc theo mã, tên hoặc PO.</p>";
+}
+if (usageSteps[5]) {
+  usageSteps[5].querySelector("summary")!.textContent = "6. Ghép ZIP và upload hàng loạt";
+  usageSteps[5].querySelector("div")!.innerHTML = "<p>Chọn hoặc thả một file ZIP. Mỗi bản vẽ cần có tên trùng chính xác mã hàng, ví dụ <code>HAE-088-3B1-00-MKAC.pdf</code>. Kiểm tra các cảnh báo PDF thiếu, trùng hoặc không khớp trước khi tiếp tục.</p><p>Chọn từng dòng để nhập kết quả QC riêng. Nút <strong>Tạo &amp; gửi</strong> sẽ tạo PDF và upload từng hồ sơ; lỗi được giữ lại để chạy lại mà không gửi lại hồ sơ đã thành công. Mỗi PDF nguồn và PDF hoàn chỉnh cần nằm trong giới hạn 20 MiB.</p>";
+}
 
 function icon(name: string): string {
   const paths: Record<string, string> = {
@@ -417,18 +451,19 @@ function renderPreviewActions(): void {
   const hasPreview = Boolean(previewBytes);
   const current = activeDocument();
   const alreadyUploaded = current?.status === "sent" && Boolean(current.uploaded);
+  const zipLoading = Boolean(current && pendingZipLoads.has(current.documentId));
   const create = document.querySelector<HTMLButtonElement>("#createPreview");
   const upload = document.querySelector<HTMLButtonElement>("#uploadPdf");
   const download = document.querySelector<HTMLButtonElement>("#downloadPdf");
-  if (create) { create.disabled = isGeneratingPreview || isUploading; create.className = hasPreview ? "secondary" : "primary"; }
+  if (create) { create.disabled = isGeneratingPreview || isUploading || zipLoading || batchIsRunning; create.className = hasPreview ? "secondary" : "primary"; }
   if (upload) {
-    upload.disabled = !hasPreview || isGeneratingPreview || isUploading || alreadyUploaded || !authSession;
+    upload.disabled = !hasPreview || isGeneratingPreview || isUploading || batchIsRunning || alreadyUploaded || !authSession;
     upload.className = hasPreview && !alreadyUploaded ? "primary" : "secondary";
     upload.setAttribute("aria-busy", isUploading ? "true" : "false");
     upload.innerHTML = alreadyUploaded ? `${icon("check")} Đã gửi hồ sơ` : `${icon("upload")} Gửi hồ sơ`;
     upload.title = !authSession ? "Đăng nhập Google để gửi hồ sơ" : alreadyUploaded ? "Hồ sơ này đã gửi thành công" : "Gửi hồ sơ QC";
   }
-  if (download) download.disabled = !hasPreview || isGeneratingPreview;
+  if (download) download.disabled = !hasPreview || isGeneratingPreview || batchIsRunning;
 }
 
 function renderWorkflowState(): void {
@@ -483,6 +518,8 @@ function renderDocumentRecord(): void {
 }
 
 function renderEmptyPreview(): void {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = undefined;
   const previewBox = document.querySelector<HTMLDivElement>("#previewBox");
   if (!previewBox) return;
   previewBox.className = "preview-box empty";
@@ -505,10 +542,6 @@ function clearActivePreview(): void {
   previewBytes = undefined;
   previewBytesByDocument.delete(current.documentId);
   previewPageCountByDocument.delete(current.documentId);
-  if (previewUrl) {
-    URL.revokeObjectURL(previewUrl);
-    previewUrl = undefined;
-  }
   renderEmptyPreview();
   current.status = "draft";
   current.requestId = undefined;
@@ -550,9 +583,11 @@ function persistActiveDocument(): void {
   const qc = readFormSnapshot();
   current.qc = qc;
   current.product = qc.product;
-  current.drawingNames = drawingFiles.map((file) => file.name);
+  const zipSource = zipSourceForDocument(current);
+  current.drawingNames = zipSource ? [zipSource.name] : drawingFiles.map((file) => file.name);
   current.updatedAt = new Date().toISOString();
-  drawingFilesByDocument.set(current.documentId, [...drawingFiles]);
+  if (zipSource) drawingFilesByDocument.delete(current.documentId);
+  else drawingFilesByDocument.set(current.documentId, [...drawingFiles]);
 }
 
 function renderMeasurementStandardFromData(standard?: MeasurementStandard): void {
@@ -585,7 +620,97 @@ function renderMeasurementRowsFromData(rows: ProductQc["measurements"]): void {
   updateMeasurementAssessments();
 }
 
+function batchIssueForProduct(product: Product): ZipMatchIssue | undefined {
+  const key = normalizePartNo(product.partNo);
+  return zipMatchIssues.find((issue) => issue.partNo && normalizePartNo(issue.partNo) === key && issue.kind !== "unmatched");
+}
+
+function zipSourceForDocument(record: InternalDocument): ZipPdfSource | undefined {
+  return zipPdfSources.get(normalizePartNo(record.product.partNo));
+}
+
+async function ensureZipDrawingForDocument(record: InternalDocument): Promise<File | undefined> {
+  const source = zipSourceForDocument(record);
+  if (!source) return undefined;
+  if (loadedZipDrawingDocumentId === record.documentId && loadedZipDrawing) return loadedZipDrawing;
+  const pending = pendingZipLoads.get(record.documentId);
+  if (pending) return pending;
+  const load = (async () => {
+    const bytes = await source.loadBytes();
+    const file = new File([bytes.slice().buffer as ArrayBuffer], source.name, { type: "application/pdf" });
+    if (activeDocument()?.documentId === record.documentId) {
+      loadedZipDrawingDocumentId = record.documentId;
+      loadedZipDrawing = file;
+      drawingFiles = [file];
+      renderDrawingList();
+      renderPreviewActions();
+    }
+    return file;
+  })();
+  pendingZipLoads.set(record.documentId, load);
+  try { return await load; }
+  finally {
+    pendingZipLoads.delete(record.documentId);
+    if (activeDocument()?.documentId === record.documentId) renderPreviewActions();
+  }
+}
+
+function renderBatchProductTable(): void {
+  const list = document.querySelector<HTMLDivElement>("#productList")!;
+  const count = document.querySelector<HTMLSpanElement>("#productCount")!;
+  const sentCount = documents.filter((item) => item.status === "sent").length;
+  count.textContent = `${documents.length} mã · ${sentCount} đã gửi`;
+  const query = batchSearchQuery.trim().toLocaleLowerCase("vi");
+  const visible = documents.map((record, index) => ({ record, index })).filter(({ record }) => {
+    if (!query) return true;
+    return [record.product.partNo, record.product.productName, record.product.project, record.product.po, record.product.supplier, record.product.slipNo]
+      .some((value) => String(value ?? "").toLocaleLowerCase("vi").includes(query));
+  });
+  const rows = visible.map(({ record, index }) => {
+    const product = record.product;
+    const source = zipSourceForDocument(record);
+    const issue = batchIssueForProduct(product);
+    const manualDrawings = drawingFilesByDocument.get(record.documentId) ?? [];
+    const pdfStatus = issue ? `<span class="batch-chip is-error" title="${escapeHtml(issue.message)}">Cần xử lý</span>`
+      : source ? `<span class="batch-chip is-ready" title="${escapeHtml(source.name)}">PDF khớp</span>`
+        : manualDrawings.length ? `<span class="batch-chip is-ready">${manualDrawings.length} PDF</span>`
+          : `<span class="batch-chip is-missing">Thiếu PDF</span>`;
+    const selected = index === selectedProductIndex;
+    return `<tr class="product-table-row ${selected ? "selected" : ""}" data-product-index="${index}" aria-selected="${selected}" tabindex="0">
+      <td class="product-table-index">${String(index + 1).padStart(2, "0")}</td>
+      <td><button type="button" class="batch-product-select" data-product-index="${index}"><strong>${escapeHtml(product.partNo || "Chưa có mã hàng")}</strong><small>${escapeHtml(product.productName || "Chưa có tên hàng")}</small></button></td>
+      <td title="${escapeHtml(product.project)}">${escapeHtml(product.project || "—")}</td>
+      <td><span>${escapeHtml(product.po || "—")}</span><small class="batch-cell-sub">${escapeHtml(product.supplier || "—")}</small></td>
+      <td>${escapeHtml(`${product.quantity} ${product.unit}`.trim())}</td>
+      <td><span>${escapeHtml(product.slipNo || "—")}</span><small class="batch-cell-sub">${escapeHtml(product.receivedDate || "—")}</small></td>
+      <td>${pdfStatus}<small class="batch-cell-sub document-status ${record.status}" title="${escapeHtml(record.statusMessage ?? "")}">${documentStatusLabel(record.status)}</small></td>
+      <td class="product-table-action"><button class="product-table-delete" type="button" data-remove-product-index="${index}" aria-label="Xóa ${escapeHtml(product.partNo)}" title="Xóa mã hàng">×</button></td>
+    </tr>`;
+  }).join("");
+  const table = rows ? `<div class="product-table-scroll"><table class="product-table batch-product-table"><thead><tr><th>#</th><th>Mã hàng / Tên hàng</th><th>Dự án</th><th>PO / NCC</th><th>Số lượng</th><th>Phiếu NK / Ngày</th><th>PDF / Trạng thái</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<div class="batch-empty">${query ? "Không tìm thấy mã hàng phù hợp." : "Chưa có mã hàng trong lô."}</div>`;
+  list.innerHTML = table;
+  const search = document.querySelector<HTMLInputElement>("#productSearch");
+  if (search) {
+    if (search.value !== batchSearchQuery) search.value = batchSearchQuery;
+    search.disabled = batchIsRunning;
+  }
+  list.querySelectorAll<HTMLButtonElement>("button").forEach((button) => { button.disabled = batchIsRunning; });
+  const zipInput = document.querySelector<HTMLInputElement>("#batchZip");
+  if (zipInput) zipInput.disabled = batchIsRunning;
+  const matchedCount = [...documents].filter((record) => zipSourceForDocument(record)).length;
+  const zipSummary = document.querySelector<HTMLElement>("#batchZipSummary");
+  if (zipSummary && batchZipName) zipSummary.textContent = `${batchZipName} · ${matchedCount}/${documents.length} mã đã ghép PDF`;
+  const readyCount = documents.filter((record) => zipSourceForDocument(record) && record.status !== "sent").length;
+  const runButton = document.querySelector<HTMLButtonElement>("#runBatchUpload");
+  if (runButton) runButton.disabled = batchIsRunning || !batchZipName || readyCount === 0;
+  const addButton = document.querySelector<HTMLButtonElement>("#addProductRow");
+  if (addButton) addButton.disabled = batchIsRunning;
+}
+
 function renderProductList(): void {
+  renderBatchProductTable();
+  return;
   const list = document.querySelector<HTMLDivElement>("#productList")!;
   const count = document.querySelector<HTMLSpanElement>("#productCount")!;
   count.textContent = `${documents.length} sản phẩm · ${documents.filter((document) => document.status === "sent").length} đã gửi`;
@@ -651,6 +776,18 @@ function removeProductCard(documentId: string): void {
   previewBytesByDocument.delete(documentId);
   previewPageCountByDocument.delete(documentId);
 
+  if (documents.length === 0 && batchIsRunning) {
+    drawingFiles = [];
+    loadedZipDrawing = undefined;
+    loadedZipDrawingDocumentId = undefined;
+    previewBytes = undefined;
+    renderEmptyPreview();
+    renderDrawingList();
+    renderProductList();
+    renderDocumentRecord();
+    return;
+  }
+
   if (documents.length === 0) {
     documents = [createInternalDocument({
       ...sampleProduct,
@@ -669,10 +806,6 @@ function removeProductCard(documentId: string): void {
 
   if (wasSelected) {
     previewBytes = undefined;
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      previewUrl = undefined;
-    }
     loadProductDocument(selectedProductIndex, false);
   } else {
     renderProductList();
@@ -741,13 +874,20 @@ function loadProductDocument(index: number, announce = true): void {
   if (!next) return;
   if (index !== selectedProductIndex) persistActiveDocument();
   selectedProductIndex = index;
-  drawingFiles = [...(drawingFilesByDocument.get(next.documentId) ?? [])];
+  loadedZipDrawing = undefined;
+  loadedZipDrawingDocumentId = undefined;
+  drawingFiles = zipSourceForDocument(next) ? [] : [...(drawingFilesByDocument.get(next.documentId) ?? [])];
   restoreDocumentForm(next);
   previewBytes = previewBytesByDocument.get(next.documentId);
   if (previewBytes) showPreview(previewBytes); else renderEmptyPreview();
   renderDrawingList();
   renderProductList();
   renderDocumentRecord();
+  if (zipSourceForDocument(next)) void ensureZipDrawingForDocument(next).catch((error) => {
+    if (activeDocument()?.documentId !== next.documentId) return;
+    setMessage(error instanceof Error ? error.message : `Không đọc được PDF cho ${next.product.partNo}.`, "error");
+  });
+  renderPreviewActions();
   if (announce) setMessage(`Đang mở hồ sơ riêng của mã hàng ${next.product.partNo}.`);
 }
 
@@ -851,6 +991,12 @@ function legacyAddDrawingFiles(files: File[]): void {
 
 function renderDrawingList(): void {
   const list = document.querySelector<HTMLDivElement>("#drawingList")!;
+  const current = activeDocument();
+  const zipSource = current ? zipSourceForDocument(current) : undefined;
+  if (zipSource) {
+    list.innerHTML = `<div class="drawing-item"><span class="file-type">ZIP</span><span class="drawing-file-name" title="${escapeHtml(zipSource.name)}">${escapeHtml(zipSource.name)}</span><span class="drawing-size">${Math.max(1, Math.round(zipSource.size / 1024))} KB</span><span class="batch-chip is-ready">Ghép theo mã</span></div>`;
+    return;
+  }
   if (drawingFiles.length === 0) {
     list.innerHTML = `<div class="drawing-empty">Chưa có bản vẽ nào được chọn cho mã hàng này.</div>`;
     return;
@@ -886,18 +1032,25 @@ function renumberMeasurementRows(): void {
 }
 
 document.querySelector<HTMLDivElement>("#productList")!.addEventListener("click", (event) => {
+  const remove = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-remove-product-index]");
+  if (remove) {
+    const record = documents[Number(remove.dataset.removeProductIndex)];
+    if (record && record.status !== "sent" && window.confirm(`Xóa mã ${record.product.partNo || "chưa có mã"} cùng dữ liệu QC đã nhập trong lô này?`)) removeProductCard(record.documentId);
+    return;
+  }
   const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-product-index]");
-  if (!target) return;
+  const row = (event.target as HTMLElement).closest<HTMLTableRowElement>("tr[data-product-index]");
+  if (!target && !row) return;
   syncCurrentProduct();
-  loadProductDocument(Number(target.dataset.productIndex));
+  loadProductDocument(Number(target?.dataset.productIndex ?? row?.dataset.productIndex));
 });
 document.querySelector<HTMLDivElement>("#productList")!.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
-  const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-product-index]");
-  if (!target) return;
+  const row = (event.target as HTMLElement).closest<HTMLTableRowElement>("tr[data-product-index]");
+  if (!row || (event.target as HTMLElement).closest("button")) return;
   event.preventDefault();
   syncCurrentProduct();
-  loadProductDocument(Number(target.dataset.productIndex));
+  loadProductDocument(Number(row.dataset.productIndex));
 });
 
 document.querySelector<HTMLDetailsElement>("#documentLibrary")?.addEventListener("toggle", () => renderUploadedLibrary());
@@ -986,17 +1139,256 @@ document.querySelector<HTMLButtonElement>("#importExcel")!.addEventListener("cli
     drawingFilesByDocument.clear();
     previewBytesByDocument.clear();
     previewPageCountByDocument.clear();
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    previewUrl = undefined;
     previewBytes = undefined;
     selectedProductIndex = 0;
     loadProductDocument(0, false);
+    if (batchZipFile) void loadBatchZip(batchZipFile);
     renderUploadedLibrary();
     setMessage(`Đã nạp ${imported.length} sản phẩm từ Excel.`, "success");
   } catch (error) {
     setMessage(error instanceof Error ? error.message : "Không đọc được dữ liệu Excel.", "error");
   }
 });
+
+function renderBatchZipIssues(): void {
+  const panel = document.querySelector<HTMLDivElement>("#batchZipIssues");
+  if (!panel) return;
+  if (zipMatchIssues.length === 0) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  panel.hidden = false;
+  const visibleIssues = zipMatchIssues.slice(0, 40);
+  panel.innerHTML = `${visibleIssues.map((issue) => `<p>${escapeHtml(issue.message)}</p>`).join("")}${zipMatchIssues.length > visibleIssues.length ? `<p>… và ${zipMatchIssues.length - visibleIssues.length} cảnh báo khác.</p>` : ""}`;
+}
+
+async function loadBatchZip(file: File): Promise<void> {
+  const loadToken = ++batchZipLoadToken;
+  batchZipFile = undefined;
+  batchZipName = "";
+  zipPdfSources = new Map();
+  zipMatchIssues = [];
+  loadedZipDrawing = undefined;
+  loadedZipDrawingDocumentId = undefined;
+  const currentRecord = activeDocument();
+  drawingFiles = currentRecord ? [...(drawingFilesByDocument.get(currentRecord.documentId) ?? [])] : [];
+  const summary = document.querySelector<HTMLElement>("#batchZipSummary");
+  const runButton = document.querySelector<HTMLButtonElement>("#runBatchUpload");
+  if (runButton) runButton.disabled = true;
+  if (summary) summary.textContent = `Đang kiểm tra ${file.name}…`;
+  try {
+    const result = await matchPdfZip(file, documents.map((record) => record.product));
+    if (loadToken !== batchZipLoadToken) return;
+    batchZipFile = file;
+    zipPdfSources = result.byPartNo;
+    zipMatchIssues = result.issues;
+    batchZipName = result.zipName;
+    for (const record of documents) {
+      if (record.status !== "sent") {
+        record.status = "draft";
+        record.statusMessage = undefined;
+      }
+    }
+    previewBytesByDocument.clear();
+    previewPageCountByDocument.clear();
+    previewBytes = undefined;
+    if (documents[selectedProductIndex]) loadProductDocument(selectedProductIndex, false);
+    renderBatchZipIssues();
+    renderProductList();
+    renderDrawingList();
+    const matchedCount = [...zipPdfSources.keys()].length;
+    const message = `${file.name}: ${matchedCount}/${documents.length} mã ghép được PDF${zipMatchIssues.length ? ` · ${zipMatchIssues.length} mục cần kiểm tra` : " · tất cả đều khớp"}.`;
+    if (summary) summary.textContent = message;
+    setMessage(message, zipMatchIssues.some((issue) => issue.kind === "missing" || issue.kind === "duplicate" || issue.kind === "oversize") ? "info" : "success");
+  } catch (error) {
+    if (loadToken !== batchZipLoadToken) return;
+    if (summary) summary.textContent = error instanceof Error ? error.message : "Không đọc được ZIP.";
+    setMessage(error instanceof Error ? error.message : "Không đọc được ZIP.", "error");
+  } finally {
+    if (loadToken === batchZipLoadToken) renderProductList();
+  }
+}
+
+const batchZipInput = document.querySelector<HTMLInputElement>("#batchZip")!;
+const batchZipDropzone = document.querySelector<HTMLLabelElement>("#batchZipDropzone")!;
+batchZipInput.addEventListener("change", () => {
+  const file = batchZipInput.files?.[0];
+  batchZipInput.value = "";
+  if (file) void loadBatchZip(file);
+});
+batchZipDropzone.addEventListener("dragover", (event) => {
+  if (!Array.from(event.dataTransfer?.types ?? []).includes("Files")) return;
+  event.preventDefault();
+  batchZipDropzone.classList.add("drag-over");
+});
+batchZipDropzone.addEventListener("dragleave", () => batchZipDropzone.classList.remove("drag-over"));
+batchZipDropzone.addEventListener("drop", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  batchZipDropzone.classList.remove("drag-over");
+  const file = Array.from(event.dataTransfer?.files ?? []).find((candidate) => /\.zip$/i.test(candidate.name));
+  if (file) void loadBatchZip(file);
+  else setMessage("Hãy thả một file .zip chứa các bản vẽ PDF.", "error");
+});
+document.querySelector<HTMLInputElement>("#productSearch")!.addEventListener("input", (event) => {
+  batchSearchQuery = (event.currentTarget as HTMLInputElement).value;
+  renderProductList();
+});
+document.querySelector<HTMLButtonElement>("#addProductRow")!.addEventListener("click", () => {
+  if (documents.length > 0) persistActiveDocument();
+  const record = createInternalDocument({ project: "", po: "", partNo: "", productName: "", lotNo: "N/A", supplier: "", quantity: 0, unit: "PCS", slipNo: "", receivedDate: "" }, documents.length + 1);
+  record.documentId = `DOC-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+  documents.push(record);
+  selectedProductIndex = documents.length - 1;
+  loadProductDocument(selectedProductIndex, false);
+  renderProductList();
+  if (batchZipFile) void loadBatchZip(batchZipFile);
+  setMessage("Đã thêm dòng mới. Nhập thông tin sản phẩm rồi tiếp tục.", "info");
+});
+document.querySelector<HTMLInputElement>("#partNo")!.addEventListener("change", () => {
+  if (!batchZipFile) return;
+  syncCurrentProduct();
+  void loadBatchZip(batchZipFile);
+});
+
+async function uploadAtSafeRate(pdfBytes: Uint8Array, qc: ProductQc, options: Parameters<typeof uploadProductPdf>[2]): Promise<Awaited<ReturnType<typeof uploadProductPdf>>> {
+  const minimumIntervalMs = 13_000;
+  const waitMs = Math.max(0, minimumIntervalMs - (Date.now() - lastUploadAt));
+  if (waitMs > 0) {
+    if (batchIsRunning) {
+      const progress = document.querySelector<HTMLElement>("#batchProgress");
+      if (progress) progress.textContent = `Đang chờ giới hạn Apps Script (${Math.ceil(waitMs / 1000)} giây)…`;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, waitMs));
+  }
+  lastUploadAt = Date.now();
+  return uploadProductPdf(pdfBytes, qc, options);
+}
+
+async function buildBatchPreview(record: InternalDocument): Promise<{ qc: ProductQc; bytes: Uint8Array }> {
+  const drawing = await ensureZipDrawingForDocument(record);
+  if (!drawing) throw new Error(`Thiếu PDF theo mã hàng ${record.product.partNo}.`);
+  if (activeDocument()?.documentId !== record.documentId) throw new Error("Mã hàng đang chọn đã thay đổi; hãy chạy lại lô.");
+  syncCurrentProduct();
+  const qc = readProductQc();
+  let fontOptions;
+  try { fontOptions = await loadVietnameseFont(); }
+  catch (error) { console.warn("Font tiếng Việt không tải được; tạo PDF bằng font dự phòng.", error); }
+  const qcPdf = await createQcSheetPdf(qc, fontOptions);
+  const bytes = await mergeProductPdfs(qcPdf, [{ name: drawing.name, loadBytes: async () => new Uint8Array(await drawing.arrayBuffer()) }]);
+  if (bytes.byteLength > MAX_PDF_BYTES) throw new Error(`PDF hoàn chỉnh của ${record.product.partNo} vượt giới hạn 20 MiB.`);
+  const pageCount = (await PDFDocument.load(bytes)).getPageCount();
+  previewBytes = bytes;
+  previewBytesByDocument.set(record.documentId, bytes);
+  previewPageCountByDocument.set(record.documentId, pageCount);
+  record.qc = qc;
+  record.product = qc.product;
+  record.drawingNames = [drawing.name];
+  record.pageCount = pageCount;
+  record.status = "preview-ready";
+  record.statusMessage = `${pageCount} pages ready`;
+  record.updatedAt = new Date().toISOString();
+  showPreview(bytes);
+  renderProductList();
+  renderDocumentRecord();
+  return { qc, bytes };
+}
+
+async function runBatchUpload(): Promise<void> {
+  if (batchIsRunning) return;
+  const endpoint = configuredEndpoint();
+  if (!endpoint) {
+    setMessage("Chưa cấu hình URL server upload.", "error");
+    openServerConfig();
+    return;
+  }
+  const candidates = documents.filter((record) => zipSourceForDocument(record) && !(record.status === "sent" && record.uploaded));
+  if (candidates.length === 0) {
+    setMessage("Chưa có mã hàng nào vừa khớp PDF trong ZIP vừa cần upload.", "info");
+    return;
+  }
+  const estimatedMinutes = Math.max(1, Math.ceil((candidates.length * 13) / 60));
+  if (!window.confirm(`Sẽ tạo và upload ${candidates.length} hồ sơ riêng, mỗi hồ sơ kèm PDF theo mã hàng. Thời gian chờ quota tối thiểu khoảng ${estimatedMinutes} phút. Tiếp tục?`)) return;
+  try { await requireAuthSession(); }
+  catch (error) {
+    setMessage(error instanceof Error ? error.message : "Cần đăng nhập Google trước khi upload.", "error");
+    return;
+  }
+
+  const candidateIds = candidates.map((record) => record.documentId);
+  batchIsRunning = true;
+  document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(".form-column input, .form-column select, .form-column textarea").forEach((field) => { field.disabled = true; });
+  renderPreviewActions();
+  let succeeded = 0;
+  let failed = 0;
+  let stoppedByServer = false;
+  renderProductList();
+  const runButton = document.querySelector<HTMLButtonElement>("#runBatchUpload");
+  if (runButton) runButton.disabled = true;
+  try {
+    for (let offset = 0; offset < candidateIds.length; offset += 1) {
+      const record = documents.find((item) => item.documentId === candidateIds[offset]);
+      if (!record || record.status === "sent") continue;
+      const index = documents.findIndex((item) => item.documentId === record.documentId);
+      loadProductDocument(index, false);
+      const progress = document.querySelector<HTMLElement>("#batchProgress");
+      if (progress) progress.textContent = `Đang xử lý ${offset + 1}/${candidateIds.length}: ${record.product.partNo}`;
+      setMessage(`Đang tạo hồ sơ ${offset + 1}/${candidateIds.length} · ${record.product.partNo}…`);
+      try {
+        const { qc, bytes } = await buildBatchPreview(record);
+        const requestId = record.requestId ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+        record.requestId = requestId;
+        record.qc = qc;
+        record.product = qc.product;
+        record.statusMessage = "Đang upload";
+        isUploading = true;
+        renderPreviewActions();
+        renderServerStatus("uploading");
+        await uploadAtSafeRate(bytes, qc, { endpoint, requestId, documentId: record.documentId, productKey: productKey(qc.product) });
+        succeeded += 1;
+      } catch (error) {
+        failed += 1;
+        const stillPresent = documents.find((item) => item.documentId === record.documentId);
+        if (stillPresent) {
+          stillPresent.status = "error";
+          stillPresent.statusMessage = error instanceof Error ? error.message : "Không xử lý được hồ sơ.";
+          stillPresent.updatedAt = new Date().toISOString();
+        }
+        previewBytesByDocument.delete(record.documentId);
+        previewPageCountByDocument.delete(record.documentId);
+        if (activeDocument()?.documentId === record.documentId) {
+          previewBytes = undefined;
+          renderEmptyPreview();
+        }
+        const uploadError = error as { code?: string; retryable?: boolean };
+        if (uploadError?.code === "RATE_LIMITED" || uploadError?.retryable) {
+          stoppedByServer = true;
+          renderProductList();
+          break;
+        }
+      } finally {
+        isUploading = false;
+        renderPreviewActions();
+        renderProductList();
+      }
+    }
+  } finally {
+    batchIsRunning = false;
+    document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(".form-column input, .form-column select, .form-column textarea").forEach((field) => { field.disabled = false; });
+    renderPreviewActions();
+    const progress = document.querySelector<HTMLElement>("#batchProgress");
+    if (progress) progress.textContent = stoppedByServer
+      ? `Đã gửi ${succeeded}; ${failed} lỗi. Server yêu cầu chờ; có thể chạy lại để tiếp tục.`
+      : `Hoàn tất lô: ${succeeded} đã gửi · ${failed} lỗi · ${zipMatchIssues.length} mục ZIP cần kiểm tra.`;
+    renderProductList();
+    renderUploadedLibrary();
+    if (stoppedByServer) setMessage(`Đã tạm dừng sau ${succeeded} hồ sơ thành công. Hãy chờ server rồi chạy lại để tiếp tục các mã còn lại.`, "info");
+    else setMessage(`Hoàn tất lô: ${succeeded} thành công, ${failed} lỗi.`, failed ? "info" : "success");
+  }
+}
+
+document.querySelector<HTMLButtonElement>("#runBatchUpload")!.addEventListener("click", () => void runBatchUpload());
 
 document.querySelector<HTMLButtonElement>("#addMeasurementRow")!.addEventListener("click", () => {
   const rows = document.querySelector<HTMLDivElement>("#measurementRows")!;
@@ -1280,12 +1672,29 @@ document.querySelector<HTMLButtonElement>("#createPreview")!.addEventListener("c
     syncCurrentProduct();
     const qc = readProductQc();
     const current = activeDocument();
-    setMessage(`Đang tạo phiếu QC và ghép ${drawingFiles.length} bản vẽ…`);
-    let mergedBytes = await createQcSheetPdf(qc, await loadVietnameseFont());
-    for (const [index, drawing] of drawingFiles.entries()) {
-      setMessage(`Đang ghép bản vẽ ${index + 1}/${drawingFiles.length}…`);
-      mergedBytes = await mergeProductPdf(mergedBytes, new Uint8Array(await drawing.arrayBuffer()));
+    setMessage("Đang tải font và tạo phiếu QC…");
+    let fontOptions;
+    let usedFallbackFont = false;
+    try {
+      fontOptions = await loadVietnameseFont();
+    } catch (fontError) {
+      usedFallbackFont = true;
+      console.warn("Không tải được font nhúng; sẽ tạo PDF bằng font dự phòng.", fontError);
     }
+
+    let qcPdf: Uint8Array;
+    try {
+      qcPdf = await createQcSheetPdf(qc, fontOptions);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "lỗi không xác định";
+      throw new Error(`Không tạo được phiếu QC (${reason}). Hãy kiểm tra nội dung nhập, sau đó thử lại.`);
+    }
+
+    setMessage(`Đang ghép ${drawingFiles.length} bản vẽ PDF…`);
+    const mergedBytes = await mergeProductPdfs(qcPdf, drawingFiles.map((drawing, index) => ({
+      name: drawing.name || `bản vẽ ${index + 1}.pdf`,
+      loadBytes: async () => new Uint8Array(await drawing.arrayBuffer()),
+    })));
     previewBytes = mergedBytes;
     const pageCount = (await PDFDocument.load(previewBytes)).getPageCount();
     previewBytesByDocument.set(current.documentId, previewBytes);
@@ -1297,21 +1706,26 @@ document.querySelector<HTMLButtonElement>("#createPreview")!.addEventListener("c
     current.status = "preview-ready";
     current.statusMessage = `${pageCount} pages ready`;
     current.updatedAt = new Date().toISOString();
-    drawingFilesByDocument.set(current.documentId, [...drawingFiles]);
+    if (zipSourceForDocument(current)) drawingFilesByDocument.delete(current.documentId);
+    else drawingFilesByDocument.set(current.documentId, [...drawingFiles]);
     showPreview(previewBytes);
     renderProductList();
     renderDocumentRecord();
-    setMessage(`Preview sẵn sàng: ${pageCount} trang · ${productKey(qc.product)}`, "success");
+    setMessage(`Preview sẵn sàng: ${pageCount} trang · ${productKey(qc.product)}${usedFallbackFont ? " · font dự phòng (kiểm tra dấu tiếng Việt)" : ""}`, usedFallbackFont ? "info" : "success");
   } catch (error) {
     previewBytes = undefined;
     renderPreviewActions();
     const current = activeDocument();
+    const memoryPressure = error instanceof RangeError || (error instanceof Error && /out of memory|array buffer|allocation failed|heap limit/i.test(error.message));
+    const errorMessage = memoryPressure
+      ? "Máy không đủ bộ nhớ để tạo preview từ các PDF đã chọn. Hãy giảm dung lượng bản vẽ hoặc chia thành ít file hơn rồi thử lại."
+      : error instanceof Error ? error.message : "Không tạo được PDF.";
     current.status = "error";
-    current.statusMessage = error instanceof Error ? error.message : "PDF error";
+    current.statusMessage = errorMessage;
     current.updatedAt = new Date().toISOString();
     renderProductList();
     renderDocumentRecord();
-    setMessage(error instanceof Error ? error.message : "Không tạo được PDF.", "error");
+    setMessage(errorMessage, "error");
   } finally {
     isGeneratingPreview = false;
     renderPreviewActions();
@@ -1357,7 +1771,7 @@ document.querySelector<HTMLButtonElement>("#uploadPdf")!.addEventListener("click
   renderDocumentRecord();
   setMessage(`Đang gửi hồ sơ của mã hàng ${current.product.partNo}…`);
   try {
-    await uploadProductPdf(previewBytes, qc, { endpoint, requestId, documentId: current.documentId, productKey: productKey(qc.product) });
+    await uploadAtSafeRate(previewBytes, qc, { endpoint, requestId, documentId: current.documentId, productKey: productKey(qc.product) });
   } catch (error) {
     current.status = "error";
     current.statusMessage = error instanceof Error ? error.message : "Upload failed";

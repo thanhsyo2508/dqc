@@ -131,6 +131,44 @@ button:disabled { cursor: not-allowed; opacity: .52; }
 .product-list { min-width: 0; padding-bottom: 2px; }
 .product-table-scroll { width: 100%; overflow-x: auto; border: 1px solid #cbd5e1; border-radius: 7px; background: #fff; }
 .product-table { width: 100%; min-width: 1120px; border-collapse: separate; border-spacing: 0; color: #334155; font-size: 11px; }
+.batch-product-table { min-width: 0; table-layout: fixed; }
+.batch-product-table th, .batch-product-table td { padding-inline: 6px; white-space: normal; overflow-wrap: anywhere; }
+.batch-product-table th:nth-child(1), .batch-product-table td:nth-child(1) { width: 34px; }
+.batch-product-table th:nth-child(2), .batch-product-table td:nth-child(2) { width: 22%; }
+.batch-product-table th:nth-child(3), .batch-product-table td:nth-child(3) { width: 13%; }
+.batch-product-table th:nth-child(4), .batch-product-table td:nth-child(4) { width: 14%; }
+.batch-product-table th:nth-child(5), .batch-product-table td:nth-child(5) { width: 11%; }
+.batch-product-table th:nth-child(6), .batch-product-table td:nth-child(6) { width: 17%; }
+.batch-product-table th:nth-child(7), .batch-product-table td:nth-child(7) { width: 17%; }
+.batch-product-table th:nth-child(8), .batch-product-table td:nth-child(8) { width: 32px; }
+.batch-product-select { display: grid; gap: 3px; width: 100%; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.batch-product-select strong { overflow: hidden; color: #0f172a; font-size: 11px; text-overflow: ellipsis; }
+.batch-product-select small, .batch-cell-sub { display: block; overflow: hidden; margin-top: 3px; color: #64748b; font-size: 9px; text-overflow: ellipsis; }
+.batch-chip { display: inline-block; padding: 3px 5px; border-radius: 999px; font-size: 9px; font-weight: 850; }
+.batch-chip.is-ready { color: #047857; background: #dcfce7; }
+.batch-chip.is-missing { color: #92400e; background: #fef3c7; }
+.batch-chip.is-error { color: #b91c1c; background: #fee2e2; }
+.batch-tools { display: grid; gap: 9px; margin-top: 4px; }
+.batch-search-label { display: grid; gap: 5px; color: #475569; font-size: 10px; font-weight: 800; }
+.batch-search-label input { min-height: 36px; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 7px; color: #0f172a; font-size: 11px; }
+.batch-zip-dropzone { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 64px; padding: 10px 12px; border: 1px dashed #93c5fd; border-radius: 9px; color: #1d4ed8; background: #f8fbff; cursor: pointer; }
+.batch-zip-dropzone > span:first-child { display: grid; gap: 4px; min-width: 0; }
+.batch-zip-dropzone strong { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.batch-zip-dropzone strong .ui-icon { width: 15px; height: 15px; }
+.batch-zip-dropzone small { overflow-wrap: anywhere; color: #64748b; font-size: 9px; line-height: 1.4; }
+.batch-zip-dropzone input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.batch-zip-dropzone.drag-over { border-color: #2563eb; background: #dbeafe; }
+.batch-zip-issues { max-height: 150px; overflow: auto; padding: 8px 10px; border: 1px solid #fde68a; border-radius: 8px; color: #854d0e; background: #fffbeb; font-size: 10px; line-height: 1.5; }
+.batch-zip-issues[hidden] { display: none; }
+.batch-zip-issues p { margin: 2px 0; }
+.batch-actions { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
+.batch-actions > span { color: #64748b; font-size: 10px; }
+.batch-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; padding: 0 10px; border: 0; border-radius: 7px; color: #fff; background: #2563eb; font-size: 10px; font-weight: 850; }
+.batch-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.batch-actions button.secondary { border: 1px solid #dbe3ed; color: #334155; background: #fff; }
+.batch-actions button.secondary:hover:not(:disabled) { background: #f1f5f9; }
+.batch-actions .ui-icon { width: 15px; height: 15px; }
+.batch-empty { padding: 14px; color: #94a3b8; font-size: 11px; text-align: center; }
 .product-table th { height: 34px; padding: 6px 9px; border-right: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; color: #1e293b; background: #eef0e9; font-weight: 800; text-align: left; white-space: nowrap; }
 .product-table td { height: 36px; padding: 5px 9px; border-right: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; background: #fff; white-space: nowrap; }
 .product-table th:last-child, .product-table td:last-child { border-right: 0; }
@@ -575,6 +613,11 @@ button:disabled { cursor: not-allowed; opacity: .52; }
   .product-entry-table .field, .product-entry-table .field:nth-child(even) { border-right: 0; }
   .product-entry-table .field:nth-last-child(-n + 2) { border-bottom: 1px solid #dbe3ed; }
   .product-entry-table .field:last-child { border-bottom: 0; }
+  .batch-product-table th:nth-child(3), .batch-product-table td:nth-child(3), .batch-product-table th:nth-child(4), .batch-product-table td:nth-child(4) { display: none; }
+  .batch-product-table th:nth-child(2), .batch-product-table td:nth-child(2) { width: 30%; }
+  .batch-product-table th:nth-child(6), .batch-product-table td:nth-child(6) { width: 24%; }
+  .batch-actions { align-items: stretch; flex-direction: column; }
+  .batch-actions button { width: 100%; }
   .measurement-scroll { overflow-x: visible; }
   .measurement-table-head { display: none; }
   .measurement-row { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; gap: 9px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
@@ -594,6 +637,11 @@ button:disabled { cursor: not-allowed; opacity: .52; }
   .import-controls button { justify-content: center; }
   .import-heading { align-items: flex-start; flex-direction: column; gap: 7px; }
   .product-item { min-width: 175px; }
+  .batch-product-table { font-size: 9px; }
+  .batch-product-table th, .batch-product-table td { padding-inline: 3px; }
+  .batch-product-table th:nth-child(5), .batch-product-table td:nth-child(5) { width: 16%; }
+  .batch-product-table th:nth-child(6), .batch-product-table td:nth-child(6) { width: 27%; }
+  .batch-product-select small { display: none; }
   .dropzone { align-items: flex-start; flex-wrap: wrap; }
   .browse-label { margin-left: 48px; }
   .preview-footer { align-items: stretch; flex-direction: column; }

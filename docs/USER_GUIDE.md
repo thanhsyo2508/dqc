@@ -68,6 +68,8 @@ Không dùng URL \`/dev\` hoặc URL trang chỉnh sửa Apps Script. Nếu lỗ
 
 Các trường có dấu \`*\` phải hoàn tất trước khi tạo preview hoặc gửi hồ sơ.
 
+Chọn một dòng trong bảng để mở dữ liệu của mã đó ở phần nhập bên dưới. Chọn **Thêm mã hàng** để tạo dòng mới, hoặc xóa dòng nháp bằng nút × ở cuối dòng. Thay đổi mã hàng sẽ kiểm tra lại việc ghép PDF trong ZIP.
+
 ### 5.2. Dán nhiều dòng từ Excel
 
 Dữ liệu phải có 9 cột theo thứ tự:
@@ -88,13 +90,21 @@ Thao tác:
 2. Nhấn \`Ctrl+C\`.
 3. Dán vào **Dán dữ liệu từ Excel**.
 4. Chọn **Nạp danh sách**.
-5. Kiểm tra lại các card sản phẩm.
+5. Kiểm tra danh sách dạng bảng. Có thể dùng ô tìm kiếm để lọc theo mã hàng, tên, PO hoặc nhà cung cấp.
 
 Có thể dán cả dòng tiêu đề. Nếu lệch cột, hãy kiểm tra Excel đang phân cách bằng tab.
 
-### 5.3. Card sản phẩm
+### 5.3. Gán PDF từ ZIP theo mã hàng
 
-Chọn card để chỉnh sửa thông tin, nhập kiểm tra, thêm PDF, tạo preview và gửi hồ sơ. Hồ sơ đã gửi sẽ không còn nằm trong danh sách card nhập liệu mà chuyển sang **Document Library**.
+1. Gom bản vẽ thành một file ZIP. Mỗi bản vẽ phải là PDF có tên trùng mã hàng, ví dụ `HAE-088-3B1-00-MKAC.pdf`.
+2. Chọn hoặc kéo thả ZIP vào vùng **Gán PDF theo mã hàng từ ZIP**.
+3. Kiểm tra trạng thái PDF trong bảng. Ứng dụng báo mã hàng bị trùng, PDF bị trùng, PDF thiếu, file không khớp mã hàng hoặc vượt giới hạn dung lượng.
+4. Chọn từng dòng để nhập thông tin kiểm tra; tiêu chuẩn và kết quả đo vẫn được lưu riêng cho từng mã hàng.
+5. Chọn **Tạo & gửi các hồ sơ đủ điều kiện**. Ứng dụng tạo và upload tuần tự từng PDF riêng, sau đó chuyển từng hồ sơ thành công vào **Document Library**.
+
+ZIP chỉ được đọc trong phiên ứng dụng hiện tại; nếu đóng/mở lại ứng dụng, hãy chọn lại ZIP. PDF đầu vào và PDF sau khi ghép báo cáo QC đều phải không quá 20 MiB. Server mặc định giới hạn 5 request mỗi phút nên lô lớn sẽ tự chờ giữa các lần gửi. Nếu server yêu cầu dừng hoặc một mã bị lỗi, chạy lại lô để tiếp tục các hồ sơ còn lại; hồ sơ đã gửi thành công sẽ không gửi lại.
+
+PDF đơn lẻ vẫn có thể được thêm thủ công ở mục dự phòng **PDF thủ công cho một mã**.
 
 ## 6. Thông tin kiểm tra
 
@@ -139,9 +149,11 @@ Ví dụ chuẩn \`10.00\`, sai số âm \`0.10\`, sai số dương \`0.10\` t�
 
 Nhập hàng chuẩn trước rồi mới nhập mẫu đo. Với thông số không áp dụng, để trống thay vì nhập số 0.
 
-## 8. Thêm bản vẽ PDF
+## 8. Tạo preview và upload một hồ sơ riêng
 
-Trong **Bản vẽ tham chiếu**:
+Với lô nhiều mã, hãy gán ZIP theo mục 5.3 rồi chọn **Tạo & gửi các hồ sơ đủ điều kiện**. Ứng dụng tự tạo báo cáo và upload tuần tự từng mã.
+
+Với trường hợp chỉ xử lý một mã hoặc cần kiểm tra thủ công, trong **PDF thủ công cho một mã**:
 
 1. Kéo thả một hoặc nhiều PDF vào vùng upload, hoặc chọn **Duyệt file**.
 2. Kiểm tra danh sách file.
@@ -150,9 +162,9 @@ Trong **Bản vẽ tham chiếu**:
 
 Phiếu QC được ghép ở trước các trang bản vẽ. File upload chính là bộ bytes PDF đã preview.
 
-## 9. Tạo và kiểm tra preview
+## 9. Kiểm tra preview thủ công
 
-Trước khi tạo preview, cần có đủ thông tin sản phẩm, thông tin kiểm tra và ít nhất một PDF.
+Trước khi tạo preview thủ công, cần có đủ thông tin sản phẩm, thông tin kiểm tra và ít nhất một PDF.
 
 Chọn **Tạo preview PDF**, sau đó kiểm tra:
 
@@ -168,11 +180,9 @@ Có thể chọn **Tải PDF** để lưu và kiểm tra độc lập trước k
 
 ## 10. Gửi hồ sơ lên Drive
 
-1. Đăng nhập Google.
-2. Kiểm tra server đã kết nối.
-3. Đảm bảo preview đã tạo.
-4. Chọn **Gửi hồ sơ**.
-5. Chờ trạng thái thành công.
+Với một hồ sơ riêng: đăng nhập Google, kiểm tra server, tạo preview rồi chọn **Gửi hồ sơ**.
+
+Với lô ZIP: đăng nhập Google, kiểm tra server, xác nhận số lượng hồ sơ khi ứng dụng hỏi rồi chờ hàng đợi xử lý. Mỗi mã được gửi bằng request riêng; ứng dụng tự giãn cách các request theo giới hạn server.
 
 Sau upload, hệ thống lưu mã hồ sơ, mã file Drive, URL, thời gian gửi, payload QR và lịch sử in. Không đóng ứng dụng lúc đang upload. Tauri Outbox có thể giữ request để retry khi mạng trở lại.
 
@@ -299,4 +309,3 @@ Chọn đúng form tem, paper size, tắt \`Fit to page\`, in thử một tem v�
 - Không commit \`.env.local\`.
 - QR chứa URL file nhưng quyền vẫn do Google Drive kiểm soát.
 - Metadata upload được lưu local để hiển thị thư viện; PDF bytes không lưu vĩnh viễn trong local storage.
-
